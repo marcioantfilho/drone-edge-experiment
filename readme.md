@@ -4,7 +4,7 @@ Infraestrutura experimental para a pergunta:
 
 Qual a menor resolução que o drone pode capturar e transmitir ao edge mantendo recall aceitável, e qual o custo em latência de cada escolha?
 
-Desenvolvimento local em CPU (Docker), execução pesada no servidor com RTX 5080. O mesmo commit roda nos dois lugares.
+Desenvolvimento local em CPU (Docker), execução pesada no servidor com RTX 5070. O mesmo proj roda nos dois lugares.
 
 1. Protocolo experimental
 
@@ -31,12 +31,12 @@ Toda célula é avaliada duas vezes:
 conf=0.001 → curva PR completa. É o número comparável com papers.
 conf=0.25 → recall no ponto de operação real do sistema de alerta. É este que vale para a dissertação: despachar viatura com conf=0.001 inunda o COPOM de falso positivo.
 2. Setup
-Local (sua máquina, CPU)
+Local
 bash
 make build-dev
 make smoke          # pipeline inteiro em 20 imagens, ~2 min
-Servidor (RTX 5080)
 
+Servidor
 Pré-requisito, uma vez:
 
 bash
@@ -76,8 +76,3 @@ figs/02_heatmap_....png	grade fatorial completa
 figs/03_acuracia_vs_latencia.png	eixo duplo: recall e ms vs imgsz
 figs/04_payload_transmissao.png	kB/quadro e ms de rádio por resolução
 figs/05_pareto_....png	fronteira de Pareto por banda de enlace
-4. Duas armadilhas que valem a nota
-
-A latência da RTX 5080 não é a latência da Orange Pi 5. A RTX serve como oráculo de acurácia — as curvas de recall transferem, porque são propriedade do modelo e dos dados, não do hardware. O número absoluto de latência de edge tem que sair da NPU RK3588 rodando .rknn INT8. Rode a mesma grade nos dois e reporte lado a lado; a razão entre elas é, por si só, um resultado.
-
-YOLOv9 não tem exemplo oficial no rknn_model_zoo. O zoo da Rockchip cobre YOLOv5/6/7/8/v10/11, YOLOX e PPYOLOE. Escolher v9 significa escrever o conversor e o decoder de saída à mão — semanas de trabalho que não são a sua contribuição. Use YOLO11n/s (caminho maduro, suporte INT8 direto) e YOLOv10n como comparação NMS-free.
