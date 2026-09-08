@@ -1,0 +1,47 @@
+services:
+  dev:
+    profiles: ["dev"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    image: sp-edge:dev
+    volumes:
+      - ../:/workspace
+      - ${DATA_DIR:-../data}:/data
+    working_dir: /workspace
+    environment:
+      - SP_EDGE_DEVICE=cpu
+    stdin_open: true
+    tty: true
+
+  gpu:
+    profiles: ["gpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+      args:
+        WITH_TENSORRT: "1"
+    image: sp-edge:gpu
+    volumes:
+      - ../:/workspace
+      - ${DATA_DIR:-/mnt/storage/sp-edge-data}:/data
+    working_dir: /workspace
+    environment:
+      - SP_EDGE_DEVICE=0
+      # trava o clock lógico do PyTorch; evita variância na medição de latência
+      - CUBLAS_WORKSPACE_CONFIG=:4096:8
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # DataLoader do PyTorch usa /dev/shm; o default de 64MB do Docker trava o treino
+    shm_size: "16gb"
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    stdin_open: true
+    tty: true

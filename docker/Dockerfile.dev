@@ -1,0 +1,32 @@
+# ============================================================
+# Imagem de DESENVOLVIMENTO (sua máquina, CPU-only)
+# ------------------------------------------------------------
+# Mesmo código, mesmas versões de ultralytics/opencv/pandas.
+# Só o backend do torch muda (wheel CPU em vez de cu128).
+# Objetivo: escrever/depurar os scripts com --smoke (20 imagens)
+# sem esperar GPU, e mandar o MESMO commit pro servidor.
+# ============================================================
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    YOLO_CONFIG_DIR=/tmp/ultralytics \
+    MPLCONFIGDIR=/tmp/mpl \
+    ULTRALYTICS_DATASETS_DIR=/data/datasets
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 git wget unzip ffmpeg tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# wheel CPU: ~200 MB em vez de ~3 GB
+RUN pip install --no-cache-dir \
+        torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["bash"]

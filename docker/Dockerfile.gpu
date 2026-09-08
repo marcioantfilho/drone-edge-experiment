@@ -1,0 +1,40 @@
+# ============================================================
+# Imagem para o SERVIDOR (RTX 5080 / Blackwell sm_120)
+# ------------------------------------------------------------
+# RTX 50xx = compute capability 12.0 (sm_120).
+# Só funciona com PyTorch >= 2.7 compilado contra CUDA 12.8+.
+# Qualquer imagem com tag -cuda12.6- ou torch 2.6 vai dar:
+#   "no kernel image is available for execution on the device"
+# ============================================================
+ARG BASE_IMAGE=pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # evita o Ultralytics escrever settings no HOME do root
+    YOLO_CONFIG_DIR=/tmp/ultralytics \
+    MPLCONFIGDIR=/tmp/mpl \
+    # datasets ficam num volume, nunca dentro da imagem
+    ULTRALYTICS_DATASETS_DIR=/data/datasets
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 git wget unzip ffmpeg tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY requirements.txt /tmp/requirements.txt
+# --no-deps no torch: já vem na imagem base e NÃO pode ser sobrescrito
+# (o ultralytics puxaria um torch genérico sem sm_120)
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+ && python -c "import torch; print('torch', torch.__version__)"
+
+# TensorRT (opcional, para o export INT8/FP16 no servidor)
+ARG WITH_TENSORRT=0
+RUN if [ "$WITH_TENSORRT" = "1" ]; then \
+        pip install --no-cache-dir tensorrt onnx onnxruntime-gpu onnxslim ; \
+    fi
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["bash"]

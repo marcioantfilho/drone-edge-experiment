@@ -1,0 +1,66 @@
+# ============================================================
+# Config única do experimento. Os 3 scripts leem daqui.
+# Mudou aqui, muda em todo lugar -> reprodutibilidade.
+# ============================================================
+
+project: sp-edge
+seed: 0
+
+dataset:
+  name: visdrone_coco
+  base_yaml: /data/datasets/VisDroneCOCO.yaml
+  split: val
+  derived_root: /data/derived
+
+# ---------- FATOR A: resolução de CAPTURA / TRANSMISSÃO ----------
+# É o que o drone realmente captura e manda pelo link.
+# Aspect ratio preservado; o valor é a ALTURA alvo em pixels.
+# "native" = imagem original, sem degradação (referência).
+capture_resolutions:
+  - {tag: native, height: null}
+  - {tag: "720p",  height: 720}
+  - {tag: "600p",  height: 600}
+  - {tag: "480p",  height: 480}
+  - {tag: "360p",  height: 360}
+  - {tag: "240p",  height: 240}
+  - {tag: "180p",  height: 180}
+
+# Compressão do link. jpeg_quality=null salva PNG (sem perda) -> isola o efeito
+# de resolução pura. Rode as duas passadas para separar os dois efeitos.
+transmission:
+  jpeg_quality: 85           # null | 95 | 85 | 70 | 50
+  interpolation: area        # area = downsampler correto (box filter)
+
+# ---------- FATOR B: imgsz da INFERÊNCIA no edge ----------
+# É o que custa FLOPs/latência. Múltiplo de 32, obrigatório.
+inference_sizes: [1280, 960, 640, 512, 320]
+
+# ---------- Modelos ----------
+models:
+  - {name: yolo11n, weights: yolo11n.pt}
+  # - {name: yolo11s, weights: runs/train/yolo11s_visdrone/weights/best.pt}
+  # - {name: yolov10n, weights: runs/train/yolov10n_visdrone/weights/best.pt}
+
+# ---------- Avaliação ----------
+eval:
+  batch: 1                   # edge é batch=1. Nunca meça latência com batch>1.
+  # duas passadas: conf baixo = curva PR completa; conf operacional = recall real
+  conf_sweep: 0.001
+  conf_operating: 0.25
+  iou_nms: 0.7
+  max_det: 1000
+  half: false                # FP32 no baseline; rode true para a curva FP16
+
+# ---------- Medição de latência ----------
+timing:
+  warmup_iters: 30
+  timed_iters: 200
+  sync_cuda: true
+
+# ---------- Modelo de latência fim-a-fim (drone -> edge) ----------
+# T_total = T_encode + T_tx + T_infer
+link:
+  # largura de banda efetiva do enlace drone->viatura, em Mbit/s
+  bandwidths_mbps: [2, 5, 10, 20, 50]
+  encode_ms_per_mpixel: 8.0  # custo de encode no drone; calibre no seu hardware
+  overhead_ms: 15.0          # RTT + handshake + fila
