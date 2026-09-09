@@ -1,6 +1,6 @@
 # NÃO liste torch/torchvision aqui.
 # A imagem GPU já traz o build cu128 (sm_120) e a imagem dev traz o build CPU.
-# Se o pip reinstalar torch por dependência, a RTX 5080 para de funcionar.
+# Se o pip reinstalar torch por dependência, a RTX 5070 para de funcionar.
 
 ultralytics>=8.4.0        # >=8.4 para YOLO26; YOLO11/YOLOv10 funcionam desde 8.3
 opencv-python-headless>=4.10
@@ -12,3 +12,4 @@ pyyaml>=6.0
 tqdm>=4.66
 pillow>=10.4
 scipy>=1.14
+gdown>=5.2

@@ -1,9 +1,10 @@
 project: sp-edge
 seed: 0
+seeds: [0, 1, 2, 67]
 
 dataset:
-  name: visdrone_coco
-  base_yaml: /data/datasets/VisDroneCOCO.yaml
+  name: visdrone
+  base_yaml: /data/datasets/VisDrone.yaml
   split: val
   derived_root: /data/derived
 
@@ -33,8 +34,8 @@ inference_sizes: [1280, 960, 640, 512, 320]
 # ---------- Modelos ----------
 models:
   - {name: yolo11n, weights: yolo11n.pt}
-  # - {name: yolo11s, weights: runs/train/yolo11s_visdrone/weights/best.pt}
-  # - {name: yolov10n, weights: runs/train/yolov10n_visdrone/weights/best.pt}
+  - {name: yolo11s, weights: yolo11s.pt}
+  - {name: yolov10n, weights: yolov10n.pt}
 
 # ---------- Avaliação ----------
 eval:
@@ -45,6 +46,8 @@ eval:
   iou_nms: 0.7
   max_det: 1000
   half: false                # FP32 no baseline; rode true para a curva FP16
+  # test-dev oficial é convertido para a chave local 'test'.
+  test_split: test
 
 # ---------- Medição de latência ----------
 timing:

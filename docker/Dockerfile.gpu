@@ -1,5 +1,5 @@
 # ============================================================
-# Imagem para o SERVIDOR (RTX 5080 / Blackwell sm_120)
+# Imagem para o SERVIDOR (RTX 5070 / Blackwell sm_120)
 # ------------------------------------------------------------
 # RTX 50xx = compute capability 12.0 (sm_120).
 # Só funciona com PyTorch >= 2.7 compilado contra CUDA 12.8+.

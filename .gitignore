@@ -2,3 +2,21 @@ data/
 venv/
 *.pt
 runs/
+
+# Python and tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Ultralytics dataset/index caches
+*.cache
+labels.cache
+
+# Local environment and editor files
+.env
+.venv/
+.idea/
+.vscode/

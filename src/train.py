@@ -10,8 +10,8 @@ from pathlib import Path
 import yaml
 
 LOG_FIELDS = [
-    "timestamp", "model", "pretrained_weights", "dataset", "smoke",
-    "imgsz", "batch", "epochs_requested", "epochs_completed", "seed",
+    "timestamp", "model", "seed", "pretrained_weights", "dataset", "smoke",
+    "imgsz", "batch", "epochs_requested", "epochs_completed",
     "device", "git_commit", "git_dirty",
     "precision", "recall", "map50", "map50_95",
     "run_dir", "best_weights",
@@ -64,7 +64,7 @@ def append_log(log_path: Path, row: dict) -> None:
 
 
 # --------------------------------------------------------------------------
-def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict) -> dict:
+def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed: int) -> dict:
     from ultralytics import YOLO
 
     tr = dict(cfg["train"])
@@ -75,7 +75,7 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict) -> d
     device = pick_device(device)
 
     weights = resolve_weights(mspec["weights"])
-    name = f"{mspec['name']}_visdrone" + ("_smoke" if args.smoke else "")
+    name = f"{mspec['name']}_visdrone_seed_{seed}" + ("_smoke" if args.smoke else "")
 
     print(f"\n=== treinando {mspec['name']} <- {weights}  "
           f"(device={device}, epochs={tr['epochs']}, imgsz={tr['imgsz']}, smoke={args.smoke})")
@@ -92,7 +92,7 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict) -> d
         fraction=tr.get("fraction", 1.0),
         max_det=tr.get("max_det", 300),
         device=device,
-        seed=cfg["seed"],
+        seed=seed,
         project=str(Path("runs/train").resolve()),
         name=name,
         exist_ok=True,
@@ -108,6 +108,7 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict) -> d
     row = {
         "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
         "model": mspec["name"],
+        "seed": seed,
         "pretrained_weights": weights,
         "dataset": cfg["dataset"]["base_yaml"],
         "smoke": args.smoke,
@@ -115,7 +116,6 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict) -> d
         "batch": tr["batch"],
         "epochs_requested": tr["epochs"],
         "epochs_completed": epochs_completed,
-        "seed": cfg["seed"],
         "device": device,
         "git_commit": prov["git_commit"],
         "git_dirty": prov["git_dirty"],
@@ -140,6 +140,8 @@ def main() -> int:
     ap.add_argument("--log", type=Path, default=Path("results/train_log.csv"))
     ap.add_argument("--models", nargs="*", default=None, help="filtra por nome")
     ap.add_argument("--device", default=None, help="sobrescreve o device do config")
+    ap.add_argument("--seeds", nargs="*", type=int, default=None,
+                    help="sobrescreve as seeds do YAML")
     ap.add_argument("--smoke", action="store_true",
                     help="2 épocas, poucas imagens (fração do split) -- valida o pipeline no PC local")
     args = ap.parse_args()
@@ -152,14 +154,19 @@ def main() -> int:
         print("Nenhum modelo selecionado (confira --models contra configs/train.yaml).")
         return 1
 
+    seeds = args.seeds if args.seeds else cfg.get("seeds", [cfg.get("seed", 0)])
+    if args.smoke:
+        seeds = cfg.get("smoke", {}).get("seeds", [seeds[0]])
+
     prov = git_provenance()
     if prov["git_dirty"]:
         print("[AVISO] worktree com mudanças não commitadas -- o commit registrado "
               "no log NAO reproduz exatamente este checkpoint.")
 
     for mspec in models:
-        row = train_one(mspec, cfg, args, prov)
-        append_log(args.log, row)
+        for seed in seeds:
+            row = train_one(mspec, cfg, args, prov, seed)
+            append_log(args.log, row)
 
     print(f"\nProveniência registrada em {args.log}")
     return 0

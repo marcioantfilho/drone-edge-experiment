@@ -1,5 +1,5 @@
 project: sp-edge-train
-seed: 0
+seeds: [0, 1, 2, 67]
 
 # ---------- Dataset ----------
 # VisDrone ORIGINAL, 10 classes (pedestrian, people, bicycle, car, van,
@@ -12,12 +12,7 @@ seed: 0
 # baseline zero-shot precisa colapsar classes para caber no que o modelo
 # já conhece. Aqui não: o modelo aprende a taxonomia real do VisDrone.
 dataset:
-  # CAMINHO ABSOLUTO, sempre. Um nome de hub bare ("VisDrone.yaml") resolve
-  # para o yaml embutido no pacote Ultralytics, cujo 'path' aponta para o
-  # dataset completo (train/val/test, ~2 GB) e dispara download automático
-  # em outro lugar -- não necessariamente /data/datasets. O arquivo em
-  # /data/datasets/VisDrone.yaml já existe no volume montado e é o que os
-  # outros scripts do projeto usam como referência.
+  # Dataset YOLO original; pode ser trocado por outro data.yaml compatível.
   base_yaml: /data/datasets/VisDrone.yaml
 
 # ---------- Modelos a treinar ----------
@@ -36,6 +31,7 @@ train:
   cache: disk   # 'ram' estoura os 32 GB com o VisDrone inteiro; 'disk' é o meio-termo seguro
   max_det: 1000 # default do Ultralytics é 300; há imagem de treino com 902 objetos anotados
   device: 0
+  selection_metric: map50_95
 
 # ---------- Modo --smoke: validar o pipeline no PC local antes de subir ao servidor ----------
 smoke:
@@ -46,3 +42,4 @@ smoke:
   cache: false
   fraction: 0.05   # poucas imagens do split de treino, só para checar que o loop roda
   device: cpu
+  seeds: [0]

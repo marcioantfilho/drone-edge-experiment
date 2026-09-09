@@ -107,8 +107,15 @@ def model_complexity(model, imgsz: int) -> dict:
 
 
 # --------------------------------------------------------------------------
+def _metric_array(value) -> list[float]:
+    if value is None:
+        return []
+    return [float(x) for x in np.asarray(value).reshape(-1)]
+
+
 def run_val(model, data_yaml: Path, imgsz: int, conf: float, cfg_eval: dict,
-            device: str, half: bool) -> dict:
+            device: str, half: bool, split: str, plot_dir: Path | None = None,
+            make_plots: bool = False) -> dict:
     """Uma passada de validação. Retorna métricas + speed do Ultralytics."""
     r = model.val(
         data=str(data_yaml),
@@ -119,13 +126,21 @@ def run_val(model, data_yaml: Path, imgsz: int, conf: float, cfg_eval: dict,
         max_det=cfg_eval["max_det"],
         device=device,
         half=half,
-        split="val",
+            # Cada YAML derivado aponta seu único conjunto avaliado para val.
+            split="val",
         rect=False,        # rect=True muda o shape por batch e polui o timing
-        plots=False,
+        plots=make_plots,
         verbose=False,
         save_json=False,
+        project=str(plot_dir.parent) if plot_dir else None,
+        name=plot_dir.name if plot_dir else None,
     )
     b = r.box
+    class_indices = [int(x) for x in np.asarray(getattr(b, "ap_class_index", []))]
+    recalls = _metric_array(getattr(b, "r", None))
+    precisions = _metric_array(getattr(b, "p", None))
+    ap50 = _metric_array(getattr(b, "ap50", None))
+    ap5095 = _metric_array(getattr(b, "ap", None))
     return {
         "recall": round(float(b.mr), 5),
         "precision": round(float(b.mp), 5),
@@ -134,6 +149,12 @@ def run_val(model, data_yaml: Path, imgsz: int, conf: float, cfg_eval: dict,
         "pre_ms": round(float(r.speed["preprocess"]), 3),
         "inf_ms": round(float(r.speed["inference"]), 3),
         "post_ms": round(float(r.speed["postprocess"]), 3),
+        "class_indices": class_indices,
+        "class_recall": recalls,
+        "class_precision": precisions,
+        "class_ap50": ap50,
+        "class_ap50_95": ap5095,
+        "plots_dir": str(plot_dir) if plot_dir else None,
     }
 
 
@@ -161,6 +182,12 @@ def main() -> int:
     ap.add_argument("--sizes", nargs="*", type=int, default=None, help="filtra imgsz")
     ap.add_argument("--tags", nargs="*", default=None, help="filtra resoluções de captura")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--split", default=None, choices=["val", "test"],
+                    help="split avaliado; por padrão usa dataset.split")
+    ap.add_argument("--seeds", nargs="*", type=int, default=None)
+    ap.add_argument("--weights-root", type=Path, default=None,
+                    help="raiz dos checkpoints: runs/train/model_visdrone_seed_N/weights/best.pt")
+    ap.add_argument("--no-plots", action="store_true")
     ap.add_argument("--half", action="store_true", help="força FP16")
     ap.add_argument("--smoke", action="store_true",
                     help="1 modelo x 2 imgsz x 2 resoluções, iterações reduzidas")
@@ -170,6 +197,7 @@ def main() -> int:
 
     cfg = yaml.safe_load(args.config.read_text())
     ds, ev, tm = cfg["dataset"], cfg["eval"], cfg["timing"]
+    split = args.split or ds["split"]
 
     device = pick_device(args.device or cfg.get("device"))
     meta = device_banner(device)
@@ -180,6 +208,7 @@ def main() -> int:
     qsuf = "lossless" if quality is None else f"q{quality}"
 
     models = cfg["models"]
+    seeds = args.seeds if args.seeds is not None else cfg.get("seeds", [0])
     sizes = cfg["inference_sizes"]
     caps = cfg["capture_resolutions"]
 
@@ -190,7 +219,7 @@ def main() -> int:
     if args.tags:
         caps = [c for c in caps if c["tag"] in args.tags]
     if args.smoke:
-        models, sizes = models[:1], sizes[:2]
+        models, sizes, seeds = models[:1], sizes[:2], seeds[:1]
         caps = caps[:2]
         tm = {"warmup_iters": 5, "timed_iters": 20, "sync_cuda": True}
 
@@ -202,72 +231,95 @@ def main() -> int:
     fieldnames = None
     rows = []
 
-    total = len(models) * len(caps) * len(sizes)
+    total = len(models) * len(seeds) * len(caps) * len(sizes)
     done = 0
+    class_rows = []
 
     for mspec in models:
-        wpath = resolve_weights(mspec["weights"])
-        if wpath is None:
-            print(f"[AVISO] pesos ausentes, pulando: {mspec['weights']}\n"
-                  f"        (treine primeiro, ou use um nome do hub como 'yolo11n.pt')")
-            continue
-        print(f"\n=== carregando {mspec['name']} <- {wpath}")
-        model = YOLO(wpath)
-
-        for cap in caps:
-            tag = cap["tag"]
-            split_dir = derived_root / f"{ds['name']}_{ds['split']}_{tag}_{qsuf}"
-            data_yaml = derived_root / f"{ds['name']}_{ds['split']}_{tag}_{qsuf}.yaml"
-            if not data_yaml.exists():
-                print(f"[AVISO] rode downsample.py antes; falta {data_yaml}")
+        for seed in seeds:
+            if args.weights_root:
+                candidate = args.weights_root / f"{mspec['name']}_visdrone_seed_{seed}" / "weights" / "best.pt"
+                wpath = str(candidate) if candidate.exists() else None
+            else:
+                wpath = resolve_weights(mspec["weights"])
+            if wpath is None:
+                print(f"[AVISO] pesos ausentes para {mspec['name']} seed={seed}; pulando")
                 continue
-            man = read_manifest(split_dir)
+            print(f"\n=== carregando {mspec['name']} seed={seed} <- {wpath}")
+            model = YOLO(wpath)
 
-            for imgsz in sizes:
-                done += 1
-                print(f"\n[{done}/{total}] {mspec['name']} | captura={tag} | imgsz={imgsz}")
+            for cap in caps:
+                tag = cap["tag"]
+                split_dir = derived_root / f"{ds['name']}_{split}_{tag}_{qsuf}"
+                data_yaml = derived_root / f"{ds['name']}_{split}_{tag}_{qsuf}.yaml"
+                if not data_yaml.exists():
+                    print(f"[AVISO] rode downsample.py antes; falta {data_yaml}")
+                    continue
+                man = read_manifest(split_dir)
 
-                lat = time_forward(model, imgsz, device,
-                                   tm["warmup_iters"], tm["timed_iters"], half)
-                cx = model_complexity(model, imgsz)
+                for imgsz in sizes:
+                    done += 1
+                    print(f"\n[{done}/{total}] {mspec['name']} seed={seed} | captura={tag} | imgsz={imgsz}")
 
-                sweep = run_val(model, data_yaml, imgsz, ev["conf_sweep"], ev, device, half)
-                oper = run_val(model, data_yaml, imgsz, ev["conf_operating"], ev, device, half)
+                    lat = time_forward(model, imgsz, device,
+                                       tm["warmup_iters"], tm["timed_iters"], half)
+                    cx = model_complexity(model, imgsz)
 
-                row = {
-                    "model": mspec["name"],
-                    "weights": wpath,
-                    "capture_tag": tag,
-                    "capture_h": cap.get("height"),
-                    "mean_w": man["mean_w"],
-                    "mean_h": man["mean_h"],
-                    "mean_kb": man["mean_kb"],
-                    "n_images": man["n_images"],
-                    "imgsz": imgsz,
-                    "precision_mode": "fp16" if half else "fp32",
-                    "jpeg_quality": quality,
-                    # ponto de operação real (o que importa para o alerta)
-                    "recall_op": oper["recall"],
-                    "precision_op": oper["precision"],
-                    "map50_op": oper["map50"],
-                    # varredura completa (comparável com papers)
-                    "recall_sweep": sweep["recall"],
-                    "precision_sweep": sweep["precision"],
-                    "map50": sweep["map50"],
-                    "map50_95": sweep["map50_95"],
-                    # latência
-                    "fwd_median_ms": lat["fwd_median_ms"],
-                    "fwd_p95_ms": lat["fwd_p95_ms"],
-                    "fwd_std_ms": lat["fwd_std_ms"],
-                    "pre_ms": sweep["pre_ms"],
-                    "inf_ms": sweep["inf_ms"],
-                    "post_ms": sweep["post_ms"],
-                    "params_M": cx["params_M"],
-                    "gflops": cx["gflops"],
-                    "device": meta.get("gpu_name", device),
-                    "torch": meta["torch"],
-                }
-                rows.append(row)
+                    plot_dir = Path("results/pr") / f"{mspec['name']}_seed_{seed}_{tag}_{imgsz}"
+                    sweep = run_val(model, data_yaml, imgsz, ev["conf_sweep"], ev, device, half,
+                                    split, plot_dir, not args.no_plots)
+                    oper = run_val(model, data_yaml, imgsz, ev["conf_operating"], ev, device, half,
+                                   split)
+
+                    row = {
+                        "model": mspec["name"],
+                        "seed": seed,
+                        "split": split,
+                        "weights": wpath,
+                        "capture_tag": tag,
+                        "capture_h": cap.get("height"),
+                        "mean_w": man["mean_w"],
+                        "mean_h": man["mean_h"],
+                        "mean_kb": man["mean_kb"],
+                        "n_images": man["n_images"],
+                        "imgsz": imgsz,
+                        "precision_mode": "fp16" if half else "fp32",
+                        "jpeg_quality": quality,
+                        "recall_op": oper["recall"],
+                        "precision_op": oper["precision"],
+                        "map50_op": oper["map50"],
+                        "recall_sweep": sweep["recall"],
+                        "precision_sweep": sweep["precision"],
+                        "map50": sweep["map50"],
+                        "map50_95": sweep["map50_95"],
+                        "fwd_median_ms": lat["fwd_median_ms"],
+                        "fwd_p95_ms": lat["fwd_p95_ms"],
+                        "fwd_std_ms": lat["fwd_std_ms"],
+                        "pre_ms": sweep["pre_ms"],
+                        "inf_ms": sweep["inf_ms"],
+                        "post_ms": sweep["post_ms"],
+                        "params_M": cx["params_M"],
+                        "gflops": cx["gflops"],
+                        "device": meta.get("gpu_name", device),
+                        "torch": meta["torch"],
+                        "selection_metric": "map50_95",
+                        "pr_plot_dir": sweep["plots_dir"],
+                    }
+                    rows.append(row)
+
+                    names_cfg = yaml.safe_load(data_yaml.read_text()).get("names", [])
+                    for metric_name, values in (("recall", oper["class_recall"]),
+                                                ("precision", oper["class_precision"]),
+                                                ("map50", sweep["class_ap50"]),
+                                                ("map50_95", sweep["class_ap50_95"])):
+                        for class_index, value in zip(oper["class_indices"], values):
+                            class_rows.append({
+                                "model": mspec["name"], "seed": seed, "split": split,
+                                "capture_tag": tag, "imgsz": imgsz,
+                                "class_id": class_index,
+                                "class_name": names_cfg[class_index] if class_index < len(names_cfg) else str(class_index),
+                                "metric": metric_name, "value": round(value, 6),
+                            })
 
                 # grava a cada célula: 40 combinações demoram, não perca tudo
                 fieldnames = list(row)
@@ -288,7 +340,15 @@ def main() -> int:
               "  * splits degradados ausentes -> rode downsample.py antes")
         return 1
 
+    class_out = args.out.with_name(f"{args.out.stem}_per_class.csv")
+    with open(class_out, "w", newline="") as f:
+        fields = ["model", "seed", "split", "capture_tag", "imgsz", "class_id", "class_name", "metric", "value"]
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(class_rows)
+
     print(f"\nGrade salva em {args.out}  ({len(rows)} linhas)")
+    print(f"Métricas por classe em {class_out}")
     return 0
 
 

@@ -1,78 +1,137 @@
-sp-edge — Resolução × Latência × Recall para detecção aérea no edge
+# sp-edge
 
-Infraestrutura experimental para a pergunta:
+Experimento reprodutivel para estudar a relacao entre resolucao capturada, latencia, transmissao e recall em deteccao de objetos aereos.
 
-Qual a menor resolução que o drone pode capturar e transmitir ao edge mantendo recall aceitável, e qual o custo em latência de cada escolha?
+O experimento final usa o VisDrone original com 10 classes, tres modelos (YOLO11n, YOLO11s e YOLOv10n) e quatro seeds (0, 1, 2 e 67). O COCO foi removido do caminho principal: ele serviu apenas para o teste local antigo.
 
-Desenvolvimento local em CPU (Docker), execução pesada no servidor com RTX 5070. O mesmo proj roda nos dois lugares.
+## Arquitetura
 
-1. Protocolo experimental
+- `configs/train.yaml`: dataset, modelos, hiperparametros e seeds do treino.
+- `configs/experiment.yaml`: resolucoes, compressao, avaliacao e enlace.
+- `src/train.py`: treina cada modelo em cada seed e salva `best.pt`.
+- `src/downsample.py`: cria resolucoes degradadas e o manifest de bytes.
+- `src/benchmark.py`: mede val/test, latencia, PR e metricas por classe.
+- `src/summarize_results.py`: calcula media, desvio-padrao e IC95% entre seeds.
+- `src/plot_results.py`: produz graficos de resolucao, latencia e Pareto.
+- `src/download_visdrone.py`: baixa o test-dev oficial com ground truth.
+- `src/transmission.py`: mede transmissao TCP real entre cliente e servidor.
 
-O experimento é fatorial em dois eixos, deliberadamente separados:
+O checkpoint escolhido em cada treino e o `best.pt` do Ultralytics, selecionado pela metrica de fitness, dominada por mAP50-95. A escolha e feita apenas no `val`; o `test` e reservado para a avaliacao final.
 
-Fator	O que é	O que ele controla
-A — resolução de captura	o que o sensor capta e o link transmite (1080p…240p)	perda de informação → mexe no recall
-B — imgsz da inferência	o tensor de entrada da rede (1280…320)	custo computacional → mexe na latência
+## Preparacao
 
-Colapsar os dois num eixo só é o erro mais comum nesse tipo de estudo: fica impossível dizer se o recall caiu porque o pixel do alvo sumiu ou porque a rede rodou menor. A grade 2D responde as duas perguntas de uma vez, e a diagonal (captura == imgsz) continua disponível para comparação com a literatura.
+Na maquina local, para testar o pipeline:
 
-Detalhe que economiza semanas: rótulos YOLO são normalizados em [0,1]. Reduzir a imagem não muda o rótulo. O downsample.py reaproveita os .txt por hardlink — nada de reconversão de bounding box, nada de erro de escala.
-
-Latência fim-a-fim
-T_total = T_overhead + T_encode + T_transmissão + T_inferência
-                       k·Mpx      payload/banda    pre+fwd+pós
-
-Reduzir a resolução corta T_transmissão quadraticamente (é área) e o recall de forma aproximadamente sigmoide. Existe portanto um joelho, e ele muda conforme a banda do enlace — num link de 2 Mbit/s vale a pena sacrificar recall por payload; num de 50 Mbit/s, não. Isso sai pronto em results/config_otima_por_banda.csv.
-
-Dois pontos de operação
-
-Toda célula é avaliada duas vezes:
-
-conf=0.001 → curva PR completa. É o número comparável com papers.
-conf=0.25 → recall no ponto de operação real do sistema de alerta. É este que vale para a dissertação: despachar viatura com conf=0.001 inunda o COPOM de falso positivo.
-2. Setup
-Local
-bash
+```bash
 make build-dev
-make smoke          # pipeline inteiro em 20 imagens, ~2 min
+make check-code
+```
 
-Servidor
-Pré-requisito, uma vez:
+Esse primeiro teste nao precisa de dataset, GPU ou download. Com o dataset ja
+montado, `make mock` executa tambem uma rodada curta de processamento e
+graficos.
 
-bash
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-bash
+No servidor com RTX 5070:
+
+```bash
 make build-gpu
-make check          # DEVE imprimir compute capability (12, 0)
+make check
+```
 
-RTX 50xx = Blackwell = sm_120. Só funciona com PyTorch ≥ 2.7 compilado contra CUDA 12.8+. Qualquer imagem com tag -cuda12.6- ou torch 2.6 falha com no kernel image is available for execution on the device. E nunca deixe o pip reinstalar torch por dependência transitiva — ele traz um build sem sm_120 e a GPU para de funcionar silenciosamente. Por isso torch não está no requirements.txt.
+`make check` deve mostrar uma GPU NVIDIA, CUDA funcional e compute capability 12.0. A imagem GPU usa PyTorch/CUDA compativel com Blackwell. O perfil `dev` e CPU-only e serve para mock e depuracao.
 
-Dataset
+## Dataset
 
-O VisDrone.yaml do Ultralytics baixa e converte para formato YOLO sozinho:
+O YAML padrao e `/data/datasets/VisDrone.yaml`. Ele deve apontar para o VisDrone original em formato YOLO, com `train`, `val` e, depois, `test`.
 
-bash
-docker compose -f docker/docker-compose.yml --profile gpu run --rm gpu \
-  python -c "from ultralytics.utils.downloads import *; from ultralytics import YOLO; \
-             YOLO('yolo11n.pt').val(data='VisDrone.yaml', imgsz=640)"
+Para baixar o test-dev oficial, que possui ground truth publico:
 
-Depois aponte dataset.base_yaml no configs/experiment.yaml para o VisDrone.yaml que ficou em /data/datasets/.
+```bash
+make download-test
+make convert-test
+```
 
-3. Fluxo
-bash
-make data     # gera os 6 splits degradados + manifest de payload
-make sweep    # varredura da grade (modelos × captura × imgsz)
-make figs     # 5 figuras + tabela de configuração ótima por banda
+O primeiro comando baixa da fonte oficial indicada pelo repositorio VisDrone; o segundo converte as anotacoes para as 10 classes originais. O nome local `test` representa o pacote oficial `test-dev`.
 
-Saídas em results/:
+## Execucao final
 
-Arquivo	Conteúdo
-grid.csv	uma linha por célula da grade, com recall/mAP/latência/payload
-grid_com_latencia.csv	idem + latência fim-a-fim para cada banda
-config_otima_por_banda.csv	a tabela que responde a pergunta da dissertação
-figs/01_..._vs_captura.png	recall × resolução capturada, uma curva por imgsz
-figs/02_heatmap_....png	grade fatorial completa
-figs/03_acuracia_vs_latencia.png	eixo duplo: recall e ms vs imgsz
-figs/04_payload_transmissao.png	kB/quadro e ms de rádio por resolução
-figs/05_pareto_....png	fronteira de Pareto por banda de enlace
+Treino completo: tres modelos x quatro seeds.
+
+```bash
+make train
+```
+
+Os checkpoints ficam em `runs/train/<modelo>_visdrone_seed_<seed>/weights/best.pt`.
+
+Gerar imagens degradadas:
+
+```bash
+make data
+```
+
+Avaliar a grade completa no `val`:
+
+```bash
+make sweep
+make summary
+make figs
+```
+
+O benchmark registra precision, recall, mAP50, mAP50-95, preprocessamento, forward, pos-processamento, p95, GFLOPs, payload e latencia fim-a-fim. Tambem grava `results/grid_per_class.csv`, incluindo `pedestrian`, `people` e as demais classes. O Ultralytics salva os artefatos de PR em `results/pr/`.
+
+Somente depois de congelar modelo, resolucao e threshold, avaliar o conjunto independente:
+
+```bash
+make test-sweep
+```
+
+O conjunto de teste nao deve ser usado para escolher hiperparametros ou a configuracao final.
+
+## Saidas
+
+```text
+results/grid.csv
+results/grid_per_class.csv
+results/test_grid.csv
+results/summary/summary_by_seed.csv
+results/summary/model_comparison_by_seed.csv
+results/pr/
+results/figs/
+results/transmission_real.csv
+```
+
+O resumo por seed evita apresentar uma unica execucao como se fosse uma estimativa estavel. Para a dissertacao, reporte media, desvio-padrao e IC95% das quatro seeds, alem dos resultados do teste independente.
+
+## Transmissao real
+
+A formula de latencia do benchmark e uma estimativa. Para medir a rede real, rode o servidor na maquina edge e o cliente em outro host.
+
+Servidor:
+
+```bash
+make tx-server PORT=5000
+```
+
+Cliente, em outro host:
+
+```bash
+make tx-client HOST=IP_DO_SERVIDOR DIR=/data/derived/visdrone_val_720p_q85/images
+```
+
+O cliente envia cada arquivo por TCP e grava bytes, tempo e throughput. Um teste em localhost valida o protocolo, mas nao representa um enlace drone-edge.
+
+## Configuracao e mock
+
+Para trocar de dataset, altere somente `dataset.base_yaml` em `configs/train.yaml` e `configs/experiment.yaml`, mantendo a convencao YOLO. Para trocar seeds, use o YAML ou sobrescreva:
+
+```bash
+python src/train.py --config configs/train.yaml --seeds 0
+```
+
+O mock executa poucas imagens, uma seed, poucos tamanhos e CPU. Ele valida imports, dataset, pesos, CSVs e graficos, mas nao produz resultado cientifico.
+
+## Limites
+
+- O test-dev tem ground truth; o test-challenge oficial nao deve ser usado como avaliacao quantitativa sem anotacoes publicas.
+- A medicao TCP e real para o caminho de rede usado, mas nao modela outra rede.
+- Para comparacao academica, reporte media, desvio-padrao e IC95% das quatro seeds, alem dos resultados do test independente.
