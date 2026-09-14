@@ -55,12 +55,52 @@ def resolve_weights(spec: str) -> str:
 def append_log(log_path: Path, row: dict) -> None:
     """Acrescenta uma linha; nunca sobrescreve treinos anteriores."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    normalize_log(log_path)
     is_new = not log_path.exists()
     with open(log_path, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=LOG_FIELDS)
         if is_new:
             w.writeheader()
         w.writerow(row)
+
+
+def normalize_log(log_path: Path) -> None:
+    """Migra logs antigos para LOG_FIELDS e repara linhas no layout novo."""
+    if not log_path.exists():
+        return
+
+    with open(log_path, newline="") as f:
+        raw = list(csv.reader(f))
+    if not raw:
+        return
+
+    header, data = raw[0], raw[1:]
+    if header == LOG_FIELDS:
+        return
+    if set(header) != set(LOG_FIELDS):
+        raise ValueError(
+            f"Cabeçalho incompatível em {log_path}: esperado {LOG_FIELDS}, recebido {header}"
+        )
+
+    normalized = []
+    for line_no, values in enumerate(data, start=2):
+        if len(values) != len(header):
+            raise ValueError(
+                f"Linha {line_no} de {log_path} tem {len(values)} colunas; esperado {len(header)}"
+            )
+
+        # Uma execução nova pode ter sido anexada no layout novo sob o
+        # cabeçalho antigo: terceira coluna = seed, quarta = pesos.
+        follows_new_layout = values[2].lstrip("-").isdigit() and values[3].endswith(".pt")
+        source_fields = LOG_FIELDS if follows_new_layout else header
+        normalized.append(dict(zip(source_fields, values)))
+
+    tmp = log_path.with_suffix(log_path.suffix + ".tmp")
+    with open(tmp, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=LOG_FIELDS)
+        writer.writeheader()
+        writer.writerows(normalized)
+    tmp.replace(log_path)
 
 
 # --------------------------------------------------------------------------

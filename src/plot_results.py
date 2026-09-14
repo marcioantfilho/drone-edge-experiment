@@ -242,6 +242,10 @@ def main() -> int:
                     help="recall_op = ponto de operação real do sistema de alerta")
     ap.add_argument("--recall-floor", type=float, default=0.60,
                     help="recall mínimo aceitável para o alerta")
+    ap.add_argument("--latency-csv", type=Path, default=None,
+                    help="saída da grade com latência; padrão deriva de --csv")
+    ap.add_argument("--knee-csv", type=Path, default=None,
+                    help="saída da configuração ótima; padrão deriva de --csv")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(args.config.read_text())
@@ -258,10 +262,15 @@ def main() -> int:
     fig_payload(df, args.outdir / "04_payload_transmissao.png", link)
     fig_pareto(df, args.outdir / f"05_pareto_{m}.png", link, m)
 
-    df.to_csv(args.outdir.parent / "grid_com_latencia.csv", index=False)
+    stem_suffix = "" if args.csv.stem == "grid" else f"_{args.csv.stem}"
+    latency_csv = args.latency_csv or args.csv.with_name(f"grid_com_latencia{stem_suffix}.csv")
+    knee_csv = args.knee_csv or args.csv.with_name(f"config_otima_por_banda{stem_suffix}.csv")
+    latency_csv.parent.mkdir(parents=True, exist_ok=True)
+    knee_csv.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(latency_csv, index=False)
 
     kt = knee_table(df, link, m, args.recall_floor)
-    kt.to_csv(args.outdir.parent / "config_otima_por_banda.csv", index=False)
+    kt.to_csv(knee_csv, index=False)
 
     print(f"\nFiguras em {args.outdir}\n")
     print(f"Configuração de menor latência com {m} >= {args.recall_floor}:\n")
