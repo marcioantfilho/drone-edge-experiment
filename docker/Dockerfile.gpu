@@ -27,7 +27,7 @@ WORKDIR /workspace
 COPY requirements.txt /tmp/requirements.txt
 # torch não aparece em requirements.txt: o requisito do Ultralytics é
 # satisfeito pela imagem base e não deve substituir o build com sm_120.
-RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+RUN pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
  && python -c "import torch; print('torch', torch.__version__)"
 
 # TensorRT (opcional, para o export INT8/FP16 no servidor)
