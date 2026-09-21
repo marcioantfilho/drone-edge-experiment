@@ -1,4 +1,4 @@
-.PHONY: help build-dev build-gpu dev gpu smoke smoke-gpu mock check-code audit-data data test-data download-test convert-test train train-smoke sweep test-sweep summary figs tx-server tx-client check clean
+.PHONY: help build-dev build-gpu dev gpu smoke smoke-gpu mock check-code audit-data data test-data download-train-val download-test convert-test train train-smoke sweep test-sweep summary figs tx-server tx-client check clean
 
 CFG ?= configs/experiment.yaml
 DC  := docker compose -f docker/docker-compose.yml
@@ -54,8 +54,11 @@ check-code:  ## valida sintaxe e interfaces sem dataset ou GPU
 audit-data: ## valida contagens, labels, hashes e ausência de vazamento train/val
 	$(DC) --profile gpu run --rm gpu python src/audit_dataset.py --splits train val
 
+download-train-val: ## baixa train e val oficiais do VisDrone-DET
+	$(DC) --profile gpu run --rm gpu python src/download_visdrone.py --kind train-val --out /data/raw
+
 download-test:  ## baixa o VisDrone-DET test-dev oficial
-	$(DC) --profile gpu run --rm gpu python src/download_visdrone.py --out /data/raw
+	$(DC) --profile gpu run --rm gpu python src/download_visdrone.py --kind test-dev --out /data/raw
 
 convert-test:  ## converte o test-dev baixado para labels YOLO originais
 	$(DC) --profile gpu run --rm gpu python scripts/visdrone2yolo.py --src /data/raw/VisDrone2019-DET-test-dev --dst /data/datasets/VisDrone --split test

@@ -1,6 +1,26 @@
 
 ## Passo a passo completo no Ubuntu Desktop com RTX 5070
 
+### 0. O que este roteiro pressupõe
+
+- Ubuntu Desktop x86_64 com acesso administrativo (`sudo`).
+- Uma RTX 5070 visível no host, um i9/Core Ultra e pelo menos 32 GB de RAM.
+- Conexão com a internet para Docker Hub, GitHub, Google Drive e pesos
+  Ultralytics.
+- Aproximadamente 100 GB livres, considerando dados e armazenamento Docker.
+- Nenhuma outra carga relevante de CPU/GPU durante as medições finais.
+
+Dataset, checkpoints e resultados não são enviados ao GitHub pelo fluxo
+normal: estão ignorados no `.gitignore`. O GitHub guarda o código e o protocolo
+que tornam a execução reproduzível; os artefatos científicos devem ser
+arquivados separadamente ao final.
+
+Este roteiro executa integralmente a campanha computacional: treino, `val`,
+agregação das seeds, Pareto, congelamento da seleção e confirmação no test-dev.
+A latência de transmissão usada no Pareto continua sendo um cenário analítico
+definido em `configs/experiment.yaml`. Sem medir e calibrar um enlace físico,
+ela não deve ser apresentada como tempo drone→servidor observado em campo.
+
 ### 1. Preparar o sistema uma unica vez
 
 Este projeto foi configurado para uma RTX 5070 (Blackwell, compute capability
@@ -61,11 +81,45 @@ NVIDIA, Docker Engine, o plugin Docker Compose e o NVIDIA Container Toolkit.
      nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
    ```
 
-### 2. Obter o repositorio e definir onde ficarao os dados
+### 2. Publicar a versão científica e obter o repositório no servidor
 
-Entre na raiz deste repositorio e escolha um disco com bastante espaco livre.
-Neste exemplo, todos os dados persistentes ficam em
-`/mnt/storage/sp-edge-data`:
+No computador em que o código foi revisado, `git commit` cria o commit local e
+`git push` publica esse commit no GitHub. `git status --porcelain` apenas
+verifica se sobraram mudanças fora do commit; ele não envia nada:
+
+```bash
+git status --short
+git diff --check
+git add -A
+git commit -m "Congela protocolo do experimento VisDrone"
+git push origin main
+git status --porcelain
+git rev-parse HEAD
+git rev-parse origin/main
+```
+
+O `status --porcelain` não deve imprimir nada, e os dois hashes devem ser
+iguais. Não use `git add` para datasets, checkpoints ou resultados; eles já são
+ignorados pelo projeto.
+
+Onde há a 5070 ou uma nvidia equivalente, faça o clone na primeira instalação:
+
+```bash
+git clone https://github.com/marcioantfilho/drone-edge-experiment.git
+cd drone-edge-experiment
+git switch main
+git pull --ff-only origin main
+git status --porcelain
+git rev-parse HEAD
+```
+
+Se o repositório já existir, entre nele e execute somente `git switch main` e
+`git pull --ff-only origin main`. O `status --porcelain` também precisa ficar
+vazio no servidor. O executor recusa uma árvore suja porque o hash do commit
+não reproduziria alterações locais.
+
+Agora escolha um disco com bastante espaço. Neste exemplo, todos os dados
+persistentes ficam em `/mnt/storage/sp-edge-data`:
 
 ```bash
 cd /caminho/para/drone-edge-experiment
@@ -88,33 +142,35 @@ sudo mkdir -p /mnt/storage/sp-edge-data
 sudo chown -R "$USER":"$USER" /mnt/storage/sp-edge-data
 ```
 
-Antes de qualquer execução científica, revise os dois YAMLs e faça commit da
-versão exata que será usada:
+Revise `configs/train.yaml` e `configs/experiment.yaml` antes de publicar o
+commit. Não altere seeds, modelos, thresholds, resolução, qualidade JPEG ou
+regra de seleção depois de observar os resultados de `val`.
 
-```bash
-git status --short
-git diff --check
-git add -A
-git commit -m "Congela protocolo do experimento VisDrone"
-git status --porcelain
-git rev-parse HEAD
-```
-
-O penúltimo comando precisa terminar sem imprimir nada. O executor recusa uma
-árvore Git suja porque um hash de commit não reproduziria alterações locais.
-Não altere seeds, modelos, thresholds, resolução, qualidade JPEG ou regra de
-seleção depois de observar os resultados de `val`.
+Em especial, decida antes do commit se o artigo usará apenas os cenários
+analíticos de 2–50 Mbit/s ou coeficientes calibrados em uma rede física. Os
+valores `encode_ms_per_mpixel` e `overhead_ms` atuais são hipóteses declaradas,
+não medições do seu drone. Como eles influenciam a configuração escolhida no
+Pareto, não devem ser ajustados depois de ver a seleção de `val`.
 
 ### 3. Preparar o VisDrone train e val
 
-Baixe os pacotes oficiais `VisDrone2019-DET-train` e
-`VisDrone2019-DET-val`, com imagens e anotações, na seção **Task 1: Object
-Detection in Images** do repositório oficial:
+Construa a imagem e baixe automaticamente os pacotes oficiais
+`VisDrone2019-DET-train` e `VisDrone2019-DET-val`:
+
+```bash
+export DATA_DIR=/mnt/storage/sp-edge-data
+make build-gpu
+make download-train-val
+```
+
+O downloader valida CRC, estrutura e as quantidades esperadas. Se o Google
+Drive limitar o download automatizado, baixe manualmente train e val na seção
+**Task 1: Object Detection in Images** do repositório oficial:
 
 https://github.com/VisDrone/VisDrone-Dataset#task-1-object-detection-in-images
 
-Não baixe os conjuntos de vídeo, MOT ou SOT com nomes parecidos. Extraia os
-dois pacotes DET assim:
+Não baixe os conjuntos de vídeo, MOT ou SOT com nomes parecidos. Tanto o
+download automático quanto o manual devem resultar nesta estrutura:
 
 ```text
 /mnt/storage/sp-edge-data/raw/VisDrone2019-DET-train/images/
@@ -123,11 +179,9 @@ dois pacotes DET assim:
 /mnt/storage/sp-edge-data/raw/VisDrone2019-DET-val/annotations/
 ```
 
-Construa a imagem e converta os dois splits para YOLO:
+Converta os dois splits para YOLO:
 
 ```bash
-make build-gpu
-
 docker compose -f docker/docker-compose.yml --profile gpu run --rm gpu \
   python scripts/visdrone2yolo.py \
   --src /data/raw/VisDrone2019-DET-train \
@@ -352,3 +406,23 @@ esse conjunto para voltar e escolher hiperparametros.
 - `configs/train.yaml` e `configs/experiment.yaml` foram revisados e commitados.
 - A máquina está ligada à energia, sem suspensão automática e sem outra carga
   relevante de CPU/GPU.
+
+### 9. O que termina com este roteiro — e o que exige outro ensaio
+
+Ao terminar a seção 7, estarão concluídos os resultados computacionais
+reprodutíveis no VisDrone para a RTX 5070/i9, incluindo a confirmação
+independente no test-dev.
+
+Dois ensaios não fazem parte automática deste roteiro:
+
+1. Medição física drone/rede/edge. `src/transmission.py` pode medir um caminho
+   TCP real, mas uma campanha de campo ainda precisa definir transmissor,
+   codec, sinal, distância, repetição, jitter, perda e energia.
+2. Pontuação pelo toolkit oficial VisDrone. As métricas internas são adequadas
+   para o experimento controlado, mas uma comparação direta com leaderboard
+   deve exportar detecções e executar separadamente o avaliador oficial, que
+   trata regiões ignoradas segundo o protocolo VisDrone.
+
+Portanto, o roteiro sozinho basta para o experimento computacional descrito em
+`METODOLOGIA.md`. Ele não substitui um protocolo de rede física nem o avaliador
+oficial caso essas duas alegações sejam incluídas no artigo.
