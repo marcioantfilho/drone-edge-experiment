@@ -42,20 +42,29 @@ record_provenance() {
     date --iso-8601=seconds
     git rev-parse HEAD
     if [[ -n "$(git status --porcelain)" ]]; then
-        echo "AVISO: worktree com alterações não commitadas."
+        echo "ERRO: worktree com alterações não commitadas."
         git status --short
+        if [[ "${ALLOW_DIRTY:-0}" != "1" ]]; then
+            echo "Faça commit para tornar o experimento reproduzível (ou ALLOW_DIRTY=1 apenas para depuração)." >&2
+            exit 4
+        fi
+        echo "ALLOW_DIRTY=1: execução marcada como não reproduzível."
     else
         echo "Worktree limpo."
     fi
     docker --version
     docker compose version
     nvidia-smi
+    free -h
+    DOCKER_ROOT_DIR="$(docker info --format '{{.DockerRootDir}}')"
+    df -h "${DATA_DIR}" "${DOCKER_ROOT_DIR}" .
     echo "DATA_DIR=${DATA_DIR}"
+    echo "DOCKER_ROOT_DIR=${DOCKER_ROOT_DIR}"
 }
 
 check_dataset() {
     docker compose -f docker/docker-compose.yml --profile gpu run --rm -T gpu \
-        python -c "from ultralytics.data.utils import check_det_dataset; d=check_det_dataset('/data/datasets/VisDrone.yaml'); print('train:', d['train']); print('val:', d['val']); print('classes:', len(d['names'])); assert len(d['names']) == 10"
+        python -c "from pathlib import Path; from ultralytics.data.utils import check_det_dataset; d=check_det_dataset('/data/datasets/VisDrone.yaml'); train=Path(d['train']); val=Path(d['val']); print('train:', train); print('val:', val); print('classes:', len(d['names'])); assert len(d['names']) == 10; assert train.resolve() != val.resolve(), 'train e val apontam para o mesmo diretório'; assert len(list(train.glob('*'))) == 6471; assert len(list(val.glob('*'))) == 548"
 }
 
 check_checkpoints() {
@@ -80,9 +89,22 @@ prepare() {
     echo "=== Preparação da imagem GPU ==="
     make build-gpu
     make check
+    echo "=== Testes do código dentro da imagem científica ==="
+    docker compose -f docker/docker-compose.yml --profile gpu run --rm -T gpu \
+        bash -c "python -m py_compile src/*.py scripts/*.py tests/*.py && python -m unittest discover -s tests"
+    echo "=== Pré-download e abertura dos pesos-base ==="
+    docker compose -f docker/docker-compose.yml --profile gpu run --rm -T gpu \
+        python -c "from ultralytics import YOLO; [YOLO(w) for w in ('yolo11n.pt', 'yolo11s.pt', 'yolov10n.pt')]; print('pesos-base: OK')"
+    docker compose -f docker/docker-compose.yml --profile gpu run --rm -T gpu \
+        python -c "import platform, torch, ultralytics, cv2, numpy, pandas; print({'python': platform.python_version(), 'torch': torch.__version__, 'cuda': torch.version.cuda, 'ultralytics': ultralytics.__version__, 'opencv': cv2.__version__, 'numpy': numpy.__version__, 'pandas': pandas.__version__})"
+    docker compose -f docker/docker-compose.yml --profile gpu run --rm -T gpu \
+        python -m pip freeze > results/environment.lock.txt
+    docker image inspect sp-edge:gpu --format '{{json .RepoDigests}} {{.Id}}' \
+        > results/docker_image.txt
 
     echo "=== Validação do dataset train/val ==="
     check_dataset
+    make audit-data
 }
 
 train_models() {
@@ -115,6 +137,7 @@ evaluate_val() {
         results/grid_per_class.csv \
         results/grid_com_latencia.csv \
         results/config_otima_por_banda.csv \
+        results/frozen_configs.yaml \
         results/summary/summary_by_seed.csv \
         results/summary/model_comparison_by_seed.csv
 }

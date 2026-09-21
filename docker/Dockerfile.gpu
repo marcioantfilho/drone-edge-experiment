@@ -25,8 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /workspace
 
 COPY requirements.txt /tmp/requirements.txt
-# --no-deps no torch: já vem na imagem base e NÃO pode ser sobrescrito
-# (o ultralytics puxaria um torch genérico sem sm_120)
+# torch não aparece em requirements.txt: o requisito do Ultralytics é
+# satisfeito pela imagem base e não deve substituir o build com sm_120.
 RUN pip install --no-cache-dir -r /tmp/requirements.txt \
  && python -c "import torch; print('torch', torch.__version__)"
 

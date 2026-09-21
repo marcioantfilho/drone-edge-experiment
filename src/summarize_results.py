@@ -43,15 +43,18 @@ def main() -> int:
     native = val[val["capture_tag"] == "native"]
     if native.empty:
         native = val
-    comparison = (native.groupby(["model", "seed"], as_index=False)
+    # Do not average different inference sizes: that would confound model and
+    # computational budget in a table called "model comparison".
+    comparison = (native.groupby(["model", "seed", "imgsz"], as_index=False)
                   [["map50", "map50_95", "recall_op", "precision_op", "fwd_median_ms"]].mean())
     comparison.to_csv(args.outdir / "model_comparison_by_seed.csv", index=False)
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
     for model, group in comparison.groupby("model"):
-        means = group.groupby("model")["map50_95"].mean().iloc[0]
-        std = group["map50_95"].std(ddof=1) if len(group) > 1 else 0
-        ax.errorbar(model, means, yerr=std, fmt="o", capsize=4, label=model)
+        stats = group.groupby("imgsz")["map50_95"].agg(["mean", "std"]).fillna(0).sort_index()
+        ax.errorbar(stats.index, stats["mean"], yerr=stats["std"], marker="o",
+                    capsize=4, label=model)
+    ax.set_xlabel("imgsz")
     ax.set_ylabel("mAP50-95 médio no val")
     ax.set_title("Comparação dos modelos: média e desvio-padrão entre seeds")
     ax.legend(frameon=False)

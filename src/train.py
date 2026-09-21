@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime
+import hashlib
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +15,7 @@ LOG_FIELDS = [
     "timestamp", "model", "seed", "pretrained_weights", "dataset", "smoke",
     "imgsz", "batch", "epochs_requested", "epochs_completed",
     "device", "git_commit", "git_dirty",
+    "config_sha256", "python", "ultralytics", "torch", "cuda_runtime", "gpu_name",
     "precision", "recall", "map50", "map50_95",
     "run_dir", "best_weights",
 ]
@@ -50,6 +53,14 @@ def resolve_weights(spec: str) -> str:
     """Caminho local, se existir; senão assume nome do hub Ultralytics (baixa sozinho)."""
     p = Path(spec)
     return str(p) if p.exists() else spec
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def append_log(log_path: Path, row: dict) -> None:
@@ -105,6 +116,8 @@ def normalize_log(log_path: Path) -> None:
 
 # --------------------------------------------------------------------------
 def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed: int) -> dict:
+    import torch
+    import ultralytics
     from ultralytics import YOLO
 
     tr = dict(cfg["train"])
@@ -116,6 +129,12 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed
 
     weights = resolve_weights(mspec["weights"])
     name = f"{mspec['name']}_visdrone_seed_{seed}" + ("_smoke" if args.smoke else "")
+    expected_run_dir = Path("runs/train").resolve() / name
+    if expected_run_dir.exists() and not args.smoke:
+        raise FileExistsError(
+            f"Run já existe e não será sobrescrito: {expected_run_dir}. "
+            "Arquive/remova explicitamente ou use outra seed."
+        )
 
     print(f"\n=== treinando {mspec['name']} <- {weights}  "
           f"(device={device}, epochs={tr['epochs']}, imgsz={tr['imgsz']}, smoke={args.smoke})")
@@ -133,9 +152,10 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed
         max_det=tr.get("max_det", 300),
         device=device,
         seed=seed,
+        deterministic=tr.get("deterministic", True),
         project=str(Path("runs/train").resolve()),
         name=name,
-        exist_ok=True,
+        exist_ok=args.smoke,
     )
 
     box = results.box
@@ -159,6 +179,13 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed
         "device": device,
         "git_commit": prov["git_commit"],
         "git_dirty": prov["git_dirty"],
+        "config_sha256": file_sha256(args.config),
+        "python": platform.python_version(),
+        "ultralytics": ultralytics.__version__,
+        "torch": torch.__version__,
+        "cuda_runtime": torch.version.cuda,
+        "gpu_name": (torch.cuda.get_device_name(int(device))
+                     if device != "cpu" and torch.cuda.is_available() else "cpu"),
         "precision": round(float(box.mp), 5),
         "recall": round(float(box.mr), 5),
         "map50": round(float(box.map50), 5),

@@ -2,7 +2,9 @@
 # A imagem GPU já traz o build cu128 (sm_120) e a imagem dev traz o build CPU.
 # Se o pip reinstalar torch por dependência, a RTX 5070 para de funcionar.
 
-ultralytics>=8.4.0        # >=8.4 para YOLO26; YOLO11/YOLOv10 funcionam desde 8.3
+# Fixado porque definições internas de métrica/validator afetam o resultado.
+# O log de proveniência registra o restante do ambiente resolvido pelo Docker.
+ultralytics==8.4.140
 opencv-python-headless>=4.10
 numpy>=1.26,<3
 pandas>=2.2

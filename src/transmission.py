@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 HEADER = struct.Struct("!IQ")  # filename length, payload length
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
 def recv_exact(sock: socket.socket, size: int) -> bytes:
@@ -30,6 +31,7 @@ def server(args: argparse.Namespace) -> int:
     with socket.create_server((args.host, args.port), reuse_port=False) as listener:
         print(f"Servidor ouvindo em {args.host}:{args.port}")
         with listener.accept()[0] as conn:
+            conn.settimeout(args.timeout)
             while True:
                 raw = conn.recv(HEADER.size)
                 if not raw:
@@ -37,6 +39,10 @@ def server(args: argparse.Namespace) -> int:
                 if len(raw) != HEADER.size:
                     raw += recv_exact(conn, HEADER.size - len(raw))
                 name_size, payload_size = HEADER.unpack(raw)
+                if not 0 < name_size <= 4096:
+                    raise ValueError(f"tamanho de nome inválido: {name_size}")
+                if payload_size > args.max_payload_mb * 1024 * 1024:
+                    raise ValueError(f"payload excede o limite: {payload_size} bytes")
                 name = recv_exact(conn, name_size).decode("utf-8")
                 payload = recv_exact(conn, payload_size)
                 if output:
@@ -46,7 +52,8 @@ def server(args: argparse.Namespace) -> int:
 
 
 def client(args: argparse.Namespace) -> int:
-    images = sorted(p for p in args.input.iterdir() if p.is_file())
+    images = sorted(p for p in args.input.iterdir()
+                    if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
     if not images:
         raise FileNotFoundError(f"Nenhum arquivo em {args.input}")
     args.csv.parent.mkdir(parents=True, exist_ok=True)
@@ -81,6 +88,8 @@ def main() -> int:
     srv.add_argument("--host", default="0.0.0.0")
     srv.add_argument("--port", type=int, default=5000)
     srv.add_argument("--output", type=Path)
+    srv.add_argument("--timeout", type=float, default=120.0)
+    srv.add_argument("--max-payload-mb", type=int, default=100)
     cli = sub.add_parser("client")
     cli.add_argument("--host", required=True)
     cli.add_argument("--port", type=int, default=5000)

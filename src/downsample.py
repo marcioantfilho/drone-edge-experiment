@@ -10,14 +10,14 @@ a perda de informação tem que chegar no modelo como perda de informação.
 Ponto importante e que economiza muito trabalho:
     os rótulos YOLO são NORMALIZADOS (cx, cy, w, h em [0,1]).
     Reduzir a imagem NÃO muda o rótulo. Os .txt são reaproveitados por
-    hardlink — zero reprocessamento, zero risco de erro de conversão.
+    hardlink e o cache é protegido por fingerprint de conteúdo.
 
 Saída, por resolução:
     <derived_root>/<dataset>_<split>_<tag>_q<qualidade>/
         images/*.jpg
         labels/*.txt          (hardlink para os originais)
     e um manifest.csv com os bytes de cada imagem, que alimenta o
-    modelo de latência de transmissão em latency_model.py.
+    modelo de latência de transmissão em plot_results.py.
 
 Uso:
     python src/downsample.py --config configs/experiment.yaml
@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
 import os
 import shutil
 import sys
@@ -104,13 +106,13 @@ def list_images(images_dir: Path, limit: int | None = None) -> list[Path]:
 # --------------------------------------------------------------------------
 # Processamento de uma imagem
 # --------------------------------------------------------------------------
-def process_one(args) -> tuple[str, int, int, int, int] | None:
-    """Retorna (stem, w_out, h_out, bytes_out, n_labels) ou None em caso de falha."""
+def process_one(args) -> tuple[str, int, int, int, int, int]:
+    """Retorna (stem, w, h, pixels, bytes, n_labels); falhas abortam a variante."""
     src_img, src_lbl, out_img_dir, out_lbl_dir, variant = args
 
     img = cv2.imread(str(src_img), cv2.IMREAD_COLOR)
     if img is None:
-        return None
+        raise ValueError(f"Imagem ilegível: {src_img}")
     h0, w0 = img.shape[:2]
 
     if variant.height is None or variant.height >= h0:
@@ -125,12 +127,15 @@ def process_one(args) -> tuple[str, int, int, int, int] | None:
 
     if variant.quality is None:
         dst_img = out_img_dir / f"{src_img.stem}.png"
-        cv2.imwrite(str(dst_img), out, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+        written = cv2.imwrite(str(dst_img), out, [cv2.IMWRITE_PNG_COMPRESSION, 3])
     else:
         dst_img = out_img_dir / f"{src_img.stem}.jpg"
-        cv2.imwrite(str(dst_img), out, [cv2.IMWRITE_JPEG_QUALITY, variant.quality])
+        written = cv2.imwrite(str(dst_img), out, [cv2.IMWRITE_JPEG_QUALITY, variant.quality])
+    if not written:
+        raise OSError(f"OpenCV não conseguiu gravar {dst_img}")
 
-    # rótulo: hardlink (mesmo inode, ocupa 0 byte extra)
+    # Rótulo normalizado: hardlink para economizar espaço. O fingerprint
+    # invalida o cache se o conteúdo da fonte mudar.
     dst_lbl = out_lbl_dir / f"{src_img.stem}.txt"
     n_labels = 0
     if src_lbl.exists():
@@ -145,7 +150,23 @@ def process_one(args) -> tuple[str, int, int, int, int] | None:
         dst_lbl.touch()  # imagem de fundo, sem objetos — é válido no YOLO
 
     hh, ww = out.shape[:2]
-    return (src_img.stem, ww, hh, dst_img.stat().st_size, n_labels)
+    return (src_img.stem, ww, hh, ww * hh, dst_img.stat().st_size, n_labels)
+
+
+def dataset_fingerprint(images: list[Path], labels_dir: Path) -> str:
+    """Content fingerprint: derived caches must change when sources change."""
+    digest = hashlib.sha256()
+    for image in images:
+        label = labels_dir / f"{image.stem}.txt"
+        for path in (image, label):
+            digest.update(path.name.encode())
+            if path.exists():
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            else:
+                digest.update(b"<missing>")
+    return digest.hexdigest()
 
 
 # --------------------------------------------------------------------------
@@ -178,10 +199,10 @@ def build_variant(
     manifest = out_dir / "manifest.csv"
     with open(manifest, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["stem", "width", "height", "bytes", "n_labels"])
+        w.writerow(["stem", "width", "height", "pixels", "bytes", "n_labels"])
         w.writerows(sorted(rows))
 
-    total_mb = sum(r[3] for r in rows) / 1e6
+    total_mb = sum(r[4] for r in rows) / 1e6
     print(f"  -> {len(rows)} imagens | {total_mb:.1f} MB | média {total_mb*1000/max(len(rows),1):.1f} kB/img")
     return out_dir
 
@@ -214,6 +235,8 @@ def main() -> int:
     ap.add_argument("--config", type=Path, default=Path("configs/experiment.yaml"))
     ap.add_argument("--smoke", type=int, default=None,
                     help="processa só N imagens (teste rápido na máquina local)")
+    ap.add_argument("--split", choices=["val", "test"], default=None,
+                    help="sobrescreve dataset.split sem editar o YAML")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 1))
     ap.add_argument("--force", action="store_true", help="regera mesmo se já existir")
     args = ap.parse_args()
@@ -223,7 +246,7 @@ def main() -> int:
     tx = cfg["transmission"]
 
     base_yaml = Path(ds["base_yaml"])
-    split = ds["split"]
+    split = args.split or ds["split"]
     derived_root = Path(ds["derived_root"])
     derived_root.mkdir(parents=True, exist_ok=True)
 
@@ -233,23 +256,46 @@ def main() -> int:
 
     quality = tx.get("jpeg_quality")
     interp = tx.get("interpolation", "area")
+    if interp not in INTERP:
+        raise ValueError(f"Interpolação inválida: {interp}. Opções: {sorted(INTERP)}")
+    if quality is not None and not 1 <= int(quality) <= 100:
+        raise ValueError("jpeg_quality precisa estar entre 1 e 100, ou ser null")
+    source_sha256 = dataset_fingerprint(images, labels_dir)
 
     produced = []
     for spec in cfg["capture_resolutions"]:
         v = Variant(tag=spec["tag"], height=spec.get("height"), quality=quality, interp=interp)
         out_dir = derived_root / f"{ds['name']}_{split}_{v.dirname_suffix}"
         yaml_path = derived_root / f"{ds['name']}_{split}_{v.dirname_suffix}.yaml"
+        metadata_path = out_dir / "metadata.json"
+        expected_metadata = {
+            "schema_version": 2,
+            "dataset": ds["name"], "split": split,
+            "tag": v.tag, "max_height": v.height,
+            "jpeg_quality": v.quality, "interpolation": v.interp,
+            "source_sha256": source_sha256,
+            "n_images": len(images),
+        }
 
         if out_dir.exists() and not args.force:
             n = len(list((out_dir / "images").glob("*"))) if (out_dir / "images").exists() else 0
-            if n == len(images):
+            metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else None
+            if n == len(images) and metadata == expected_metadata:
                 print(f"[skip] {out_dir.name} já completo ({n} imagens)")
                 write_data_yaml(base_yaml, out_dir, yaml_path)
                 produced.append((v.tag, yaml_path))
                 continue
+            print(f"[stale] {out_dir.name}: cache incompatível; regenerando")
+
+        if out_dir.exists():
+            # Only generated children of derived_root may be removed.
+            if out_dir.resolve().parent != derived_root.resolve():
+                raise RuntimeError(f"Recusa remover diretório fora de derived_root: {out_dir}")
+            shutil.rmtree(out_dir)
 
         print(f"[gerar] {out_dir.name}")
         build_variant(images, labels_dir, out_dir, v, args.workers)
+        metadata_path.write_text(json.dumps(expected_metadata, indent=2, ensure_ascii=False))
         write_data_yaml(base_yaml, out_dir, yaml_path)
         produced.append((v.tag, yaml_path))
 

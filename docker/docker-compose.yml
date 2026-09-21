@@ -20,7 +20,9 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.gpu
       args:
-        WITH_TENSORRT: "1"
+        # O protocolo final mede PyTorch. TensorRT fica fora do build padrão
+        # para não adicionar dependências e modos numéricos não avaliados.
+        WITH_TENSORRT: "0"
     image: sp-edge:gpu
     volumes:
       - ../:/workspace

@@ -1,6 +1,0 @@
-bandwidth_mbps,capture,imgsz,model,recall_op,payload_kB,e2e_ms
-2,240p,960,yolo11n,0.1209,27.0,203.5
-5,240p,960,yolo11n,0.1209,27.0,138.8
-10,360p,640,yolo11n,0.1103,54.1,101.3
-20,360p,640,yolo11n,0.1103,54.1,79.7
-50,360p,640,yolo11n,0.1103,54.1,66.7

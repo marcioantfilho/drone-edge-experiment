@@ -1,16 +1,13 @@
 project: sp-edge-train
+# Conjunto pré-declarado; não trocar após observar resultados.
 seeds: [0, 1, 2, 67]
 
 # ---------- Dataset ----------
 # VisDrone ORIGINAL, 10 classes (pedestrian, people, bicycle, car, van,
 # truck, tricycle, awning-tricycle, bus, motor).
 #
-# Isto é DIFERENTE do VisDroneCOCO.yaml usado em configs/experiment.yaml.
-# Aquele remapeamento para as classes do COCO é uma muleta que só serve
-# para avaliar pesos pré-treinados (yolo11n.pt etc.) sem fine-tuning --
-# o vocabulário do COCO não tem "tricycle" nem "awning-tricycle", então o
-# baseline zero-shot precisa colapsar classes para caber no que o modelo
-# já conhece. Aqui não: o modelo aprende a taxonomia real do VisDrone.
+# O caminho científico inteiro usa as 10 classes originais do VisDrone.
+# Baselines exploratórios com remapeamento COCO não fazem parte do estudo.
 dataset:
   # Dataset YOLO original; pode ser trocado por outro data.yaml compatível.
   base_yaml: /data/datasets/VisDrone.yaml
@@ -31,7 +28,7 @@ train:
   cache: disk   # 'ram' estoura os 32 GB com o VisDrone inteiro; 'disk' é o meio-termo seguro
   max_det: 1000 # default do Ultralytics é 300; há imagem de treino com 902 objetos anotados
   device: 0
-  selection_metric: map50_95
+  deterministic: true
 
 # ---------- Modo --smoke: validar o pipeline no PC local antes de subir ao servidor ----------
 smoke:

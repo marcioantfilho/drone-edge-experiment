@@ -7,6 +7,16 @@ from pathlib import Path
 
 # Official VisDrone-DET test-dev archive; its ground truth is public.
 TEST_DEV_FILE_ID = "1PFdW_VFSCfZ_sTSZAGjQdifF_Xd5mf0V"
+EXPECTED_TEST_DEV_IMAGES = 1610
+
+
+def safe_extract(zf: zipfile.ZipFile, destination: Path) -> None:
+    root = destination.resolve()
+    for member in zf.infolist():
+        target = (root / member.filename).resolve()
+        if root != target and root not in target.parents:
+            raise ValueError(f"Entrada ZIP fora do destino: {member.filename}")
+    zf.extractall(root)
 
 
 def main() -> int:
@@ -31,7 +41,10 @@ def main() -> int:
             gdown.download(id=TEST_DEV_FILE_ID, output=str(archive), quiet=False)
         print(f"Extraindo {archive}...")
         with zipfile.ZipFile(archive) as zf:
-            zf.extractall(args.out)
+            bad = zf.testzip()
+            if bad:
+                raise zipfile.BadZipFile(f"CRC inválido em {bad}")
+            safe_extract(zf, args.out)
 
     # Some archives contain one extra directory level; normalize the expected name.
     candidates = list(args.out.glob("**/VisDrone2019-DET-test-dev"))
@@ -39,6 +52,13 @@ def main() -> int:
         shutil.move(str(candidates[0]), str(extracted))
     if not (extracted / "images").is_dir() or not (extracted / "annotations").is_dir():
         raise FileNotFoundError(f"Arquivo extraído sem images/ e annotations/: {extracted}")
+    n_images = len(list((extracted / "images").glob("*")))
+    n_annotations = len(list((extracted / "annotations").glob("*.txt")))
+    if (n_images, n_annotations) != (EXPECTED_TEST_DEV_IMAGES, EXPECTED_TEST_DEV_IMAGES):
+        raise ValueError(
+            f"test-dev incompleto: {n_images} imagens e {n_annotations} anotações; "
+            f"esperado {EXPECTED_TEST_DEV_IMAGES} de cada"
+        )
     print(f"Dataset disponível em {extracted}")
     return 0
 

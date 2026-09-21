@@ -1,4 +1,4 @@
-.PHONY: help build-dev build-gpu dev gpu smoke mock check-code data download-test convert-test train train-smoke sweep test-sweep summary figs tx-server tx-client check clean
+.PHONY: help build-dev build-gpu dev gpu smoke smoke-gpu mock check-code audit-data data test-data download-test convert-test train train-smoke sweep test-sweep summary figs tx-server tx-client check clean
 
 CFG ?= configs/experiment.yaml
 DC  := docker compose -f docker/docker-compose.yml
@@ -28,23 +28,44 @@ x=torch.randn(4096,4096,device='cuda'); print('matmul', (x@x).sum().item())"
 
 smoke:      ## pipeline inteiro em 20 imagens, na CPU local (~2 min)
 	$(DC) --profile dev run --rm dev bash -c "\
+python src/train.py --config configs/train.yaml --smoke --log results/train_log_smoke.csv && \
 python src/downsample.py --config $(CFG) --smoke 20 && \
-python src/benchmark.py --config $(CFG) --smoke --device cpu --out results/smoke.csv && \
-python src/plot_results.py --csv results/smoke.csv --config $(CFG) --outdir results/figs_smoke"
+python src/benchmark.py --config $(CFG) --smoke --device cpu --no-plots --weights-root runs/train --out results/smoke.csv && \
+python src/plot_results.py --csv results/smoke.csv --config $(CFG) --outdir results/figs_smoke \
+  --latency-csv results/grid_com_latencia_smoke.csv \
+  --knee-csv results/config_otima_por_banda_smoke.csv \
+  --frozen-manifest results/frozen_configs_smoke.yaml --expected-seeds 1"
+
+smoke-gpu:  ## teste de fogo curto no servidor, sem tocar nas saídas científicas
+	$(DC) --profile gpu run --rm gpu bash -c "\
+python src/train.py --config configs/train.yaml --smoke --device 0 --models yolo11n --log results/train_log_smoke_gpu.csv && \
+python src/downsample.py --config $(CFG) --smoke 20 --workers 4 && \
+python src/benchmark.py --config $(CFG) --smoke --device 0 --no-plots --weights-root runs/train --out results/smoke_gpu.csv && \
+python src/plot_results.py --csv results/smoke_gpu.csv --config $(CFG) --outdir results/figs_smoke_gpu \
+  --latency-csv results/grid_com_latencia_smoke_gpu.csv \
+  --knee-csv results/config_otima_por_banda_smoke_gpu.csv \
+  --frozen-manifest results/frozen_configs_smoke_gpu.yaml --expected-seeds 1"
 
 mock: smoke  ## alias legível para a validação local rápida
 
 check-code:  ## valida sintaxe e interfaces sem dataset ou GPU
-	$(DC) --profile dev run --rm dev bash -c "python -m py_compile src/*.py scripts/*.py && python src/train.py --help >/dev/null && python src/benchmark.py --help >/dev/null && python src/download_visdrone.py --help >/dev/null && python src/transmission.py --help >/dev/null"
+	$(DC) --profile dev run --rm dev bash -c "python -m py_compile src/*.py scripts/*.py tests/*.py && python -m unittest discover -s tests && python src/train.py --help >/dev/null && python src/benchmark.py --help >/dev/null && python src/download_visdrone.py --help >/dev/null && python src/transmission.py --help >/dev/null"
+
+audit-data: ## valida contagens, labels, hashes e ausência de vazamento train/val
+	$(DC) --profile gpu run --rm gpu python src/audit_dataset.py --splits train val
 
 download-test:  ## baixa o VisDrone-DET test-dev oficial
 	$(DC) --profile gpu run --rm gpu python src/download_visdrone.py --out /data/raw
 
 convert-test:  ## converte o test-dev baixado para labels YOLO originais
 	$(DC) --profile gpu run --rm gpu python scripts/visdrone2yolo.py --src /data/raw/VisDrone2019-DET-test-dev --dst /data/datasets/VisDrone --split test
+	$(DC) --profile gpu run --rm gpu python src/audit_dataset.py --splits train val test --out results/test_dataset_audit.json
 
 data:       ## gera todos os splits degradados (servidor)
 	$(DC) --profile gpu run --rm gpu python src/downsample.py --config $(CFG)
+
+test-data:  ## gera versões degradadas do test-dev sem alterar dataset.split
+	$(DC) --profile gpu run --rm gpu python src/downsample.py --config $(CFG) --split test
 
 train:      ## treina os três modelos nas quatro seeds (execução longa)
 	$(DC) --profile gpu run --rm gpu python src/train.py --config configs/train.yaml
@@ -55,8 +76,8 @@ train-smoke: ## testa o loop de treino em CPU com uma seed e poucas imagens
 sweep:      ## varredura completa da grade (servidor)
 	$(DC) --profile gpu run --rm gpu python src/benchmark.py --config $(CFG) --weights-root runs/train --seeds 0 1 2 67
 
-test-sweep: ## avaliação final no test-dev convertido, sem alterar escolhas
-	$(DC) --profile gpu run --rm gpu python src/benchmark.py --config $(CFG) --split test --weights-root runs/train --seeds 0 1 2 67 --out results/test_grid.csv
+test-sweep: test-data ## avalia somente configurações congeladas em val
+	$(DC) --profile gpu run --rm gpu python src/benchmark.py --config $(CFG) --split test --frozen-config results/frozen_configs.yaml --weights-root runs/train --seeds 0 1 2 67 --out results/test_grid.csv
 
 summary:    ## média, desvio-padrão e IC95% entre seeds
 	$(DC) --profile gpu run --rm gpu python src/summarize_results.py --csv results/grid.csv

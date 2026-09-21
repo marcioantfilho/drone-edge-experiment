@@ -2,7 +2,11 @@
 
 Experimento reprodutivel para estudar a relacao entre resolucao capturada, latencia, transmissao e recall em deteccao de objetos aereos.
 
-O experimento final usa o VisDrone original com 10 classes, tres modelos (YOLO11n, YOLO11s e YOLOv10n) e quatro seeds (0, 1, 2 e 67). O COCO foi removido do caminho principal: ele serviu apenas para o teste local antigo.
+O experimento final usa exclusivamente o VisDrone original com 10 classes, tres modelos (YOLO11n, YOLO11s e YOLOv10n) e quatro seeds (0, 1, 2 e 67). Artefatos e conversores exploratorios do antigo baseline COCO foram removidos.
+
+Os arquivos `yolo*.pt` ainda sao inicializacoes pre-treinadas em COCO para transfer learning; todos os modelos sao depois ajustados e avaliados na taxonomia original de 10 classes do VisDrone. Nao ha avaliacao com rotulos VisDrone remapeados para COCO.
+
+O protocolo, as variaveis descobertas e os limites de interpretacao estao em `METODOLOGIA.md`.
 
 ## Arquitetura
 
@@ -16,7 +20,7 @@ O experimento final usa o VisDrone original com 10 classes, tres modelos (YOLO11
 - `src/download_visdrone.py`: baixa o test-dev oficial com ground truth.
 - `src/transmission.py`: mede transmissao TCP real entre cliente e servidor.
 
-O checkpoint escolhido em cada treino e o `best.pt` do Ultralytics, selecionado pela metrica de fitness, dominada por mAP50-95. A escolha e feita apenas no `val`; o `test` e reservado para a avaliacao final.
+O checkpoint escolhido em cada treino e o `best.pt` do Ultralytics 8.4.140, selecionado por mAP50-95. A escolha e feita apenas no `val`; o `test` exige o manifesto congelado produzido por `make figs`.
 
 ## Preparacao
 
@@ -77,15 +81,15 @@ make summary
 make figs
 ```
 
-O benchmark registra precision, recall, mAP50, mAP50-95, preprocessamento, forward, pos-processamento, p95, GFLOPs, payload e latencia fim-a-fim. Tambem grava `results/grid_per_class.csv`, incluindo `pedestrian`, `people` e as demais classes. O Ultralytics salva os artefatos de PR em `results/pr/`.
+O benchmark registra precision/recall exatos no threshold operacional e IoU 0,50, mAP50, mAP50-95, preprocessamento, forward, pos-processamento, p95, GFLOPs, payload e latencia fim-a-fim. Tambem grava `results/grid_per_class.csv`. O Ultralytics salva os artefatos de PR em `results/pr/`.
 
-Somente depois de congelar modelo, resolucao e threshold, avaliar o conjunto independente:
+`make figs` agrega as quatro seeds, exige a grade completa e gera `results/frozen_configs.yaml`. Somente depois disso avalie o conjunto independente:
 
 ```bash
 make test-sweep
 ```
 
-O conjunto de teste nao deve ser usado para escolher hiperparametros ou a configuracao final.
+O comando recusa executar o conjunto de teste sem o manifesto selecionado em `val` e avalia somente as configuracoes congeladas.
 
 ## Saidas
 
@@ -97,6 +101,7 @@ results/summary/summary_by_seed.csv
 results/summary/model_comparison_by_seed.csv
 results/pr/
 results/figs/
+results/frozen_configs.yaml
 results/transmission_real.csv
 ```
 
