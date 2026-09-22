@@ -14,7 +14,8 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
 
 from benchmark import _exact_operating_metrics
 from audit_dataset import find_content_duplicates
-from plot_results import add_latency_columns, aggregate_seeds, knee_table
+from plot_results import (add_latency_columns, aggregate_seeds, knee_table,
+                          write_frozen_manifest)
 from visdrone2yolo import update_dataset_yaml
 
 
@@ -49,6 +50,27 @@ class DatasetSplitTests(unittest.TestCase):
 
 
 class MetricTests(unittest.TestCase):
+    def test_manifest_handles_empty_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_csv = root / "smoke_gpu.csv"
+            source_csv.write_text("model,precision_mode\n")
+            manifest_path = root / "manifest.yaml"
+            write_frozen_manifest(
+                manifest_path,
+                pd.DataFrame([{
+                    "bandwidth_mbps": 10,
+                    "status": "nenhuma atinge o piso",
+                }]),
+                source_csv,
+                {"eval": {"conf_operating": 0.25},
+                 "transmission": {"jpeg_quality": 85}},
+                "recall_op", 0.5, "mean",
+            )
+            manifest = yaml.safe_load(manifest_path.read_text())
+            self.assertEqual(manifest["precision_modes"], [])
+            self.assertEqual(manifest["configurations"], [])
+
     def test_exact_macro_and_micro_metrics(self):
         # Rows=predicted, columns=true, last index=background.
         matrix = np.array([[8, 1, 2], [2, 9, 1], [0, 1, 0]], dtype=float)

@@ -297,6 +297,10 @@ def knee_table(df: pd.DataFrame, link: dict, metric: str, floor: float,
 def write_frozen_manifest(path: Path, table: pd.DataFrame, source_csv: Path,
                           cfg: dict, metric: str, floor: float, rule: str) -> None:
     valid = table[table.get("status", pd.Series(index=table.index, dtype=object)).isna()]
+    precision_modes = (
+        sorted(valid["precision_mode"].dropna().unique().tolist())
+        if "precision_mode" in valid.columns else []
+    )
     configurations = []
     seen = set()
     for _, row in valid.iterrows():
@@ -313,7 +317,7 @@ def write_frozen_manifest(path: Path, table: pd.DataFrame, source_csv: Path,
         ).hexdigest(),
         "selection_rule": rule, "conf_operating": cfg["eval"]["conf_operating"],
         "match_iou_operating": cfg["eval"].get("match_iou_operating", 0.5),
-        "precision_modes": sorted(valid["precision_mode"].dropna().unique().tolist()),
+        "precision_modes": precision_modes,
         "jpeg_quality": cfg["transmission"].get("jpeg_quality"),
         "configurations": configurations,
     }
