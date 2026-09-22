@@ -54,6 +54,10 @@ check-code:  ## valida sintaxe e interfaces sem dataset ou GPU
 audit-data: ## valida contagens, labels, hashes e ausência de vazamento train/val
 	$(DC) --profile gpu run --rm gpu python src/audit_dataset.py --splits train val
 
+.PHONY: audit-data-strict
+audit-data-strict: ## tambem falha com duplicatas exatas dentro de qualquer split
+	$(DC) --profile gpu run --rm gpu python src/audit_dataset.py --splits train val --fail-on-intra-split-duplicates
+
 download-train-val: ## baixa train e val oficiais do VisDrone-DET
 	$(DC) --profile gpu run --rm gpu python src/download_visdrone.py --kind train-val --out /data/raw
 

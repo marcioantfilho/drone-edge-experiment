@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
 
 from benchmark import _exact_operating_metrics
+from audit_dataset import find_content_duplicates
 from plot_results import add_latency_columns, aggregate_seeds, knee_table
 from visdrone2yolo import update_dataset_yaml
 
@@ -29,6 +30,22 @@ class DatasetSplitTests(unittest.TestCase):
             self.assertEqual(cfg["train"], "images/train")
             self.assertEqual(cfg["val"], "images/val")
             self.assertEqual(cfg["test"], "images/test")
+
+    def test_duplicate_inside_one_split_is_not_leakage(self):
+        within, across = find_content_duplicates({
+            "train": {"first.jpg": "same", "second.jpg": "same"},
+            "val": {"val.jpg": "different"},
+        })
+        self.assertEqual(across, {})
+        self.assertEqual(within, {"same": [("train", "first.jpg"), ("train", "second.jpg")]})
+
+    def test_duplicate_across_splits_is_leakage(self):
+        within, across = find_content_duplicates({
+            "train": {"train.jpg": "same"},
+            "val": {"val.jpg": "same"},
+        })
+        self.assertEqual(within, {})
+        self.assertEqual(across, {"same": [("train", "train.jpg"), ("val", "val.jpg")]})
 
 
 class MetricTests(unittest.TestCase):
