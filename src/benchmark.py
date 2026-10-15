@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import platform
 import statistics
 import subprocess
@@ -163,12 +164,28 @@ def _exact_operating_metrics(matrix: np.ndarray) -> dict:
     }
 
 
-def _operating_validator(match_iou: float):
+def load_model(name: str, weights: str):
+    """RT-DETR precisa da própria classe (trainer/validator sem NMS); o resto é YOLO."""
+    from ultralytics import RTDETR, YOLO
+    return (RTDETR if name.startswith("rtdetr") else YOLO)(weights)
+
+
+def detection_validator_base(model):
+    """Validador nativo do modelo; a matriz operacional por cima é a mesma para todos."""
+    from ultralytics import RTDETR
+    if isinstance(model, RTDETR):
+        from ultralytics.models.rtdetr.val import RTDETRValidator
+        return RTDETRValidator
+    from ultralytics.models.yolo.detect import DetectionValidator
+    return DetectionValidator
+
+
+def _operating_validator(match_iou: float, base=None):
     """Build a validator that records a confusion matrix at an explicit IoU."""
     from ultralytics.models.yolo.detect import DetectionValidator
     from ultralytics.utils.metrics import ConfusionMatrix
 
-    class OperatingPointValidator(DetectionValidator):
+    class OperatingPointValidator(base or DetectionValidator):
         def init_metrics(self, model) -> None:
             super().init_metrics(model)
             self.operating_matrix = ConfusionMatrix(names=model.names)
@@ -212,7 +229,8 @@ def run_val(model, data_yaml: Path, imgsz: int, conf: float, cfg_eval: dict,
         name=plot_dir.name if plot_dir else None,
     )
     if exact_operating:
-        validator = _operating_validator(float(cfg_eval.get("match_iou_operating", 0.5)))
+        validator = _operating_validator(float(cfg_eval.get("match_iou_operating", 0.5)),
+                                         detection_validator_base(model))
         r = model.val(validator=validator, **val_args)
     else:
         r = model.val(**val_args)
@@ -270,8 +288,10 @@ def git_provenance() -> tuple[str, bool | None]:
             ["git", "status", "--porcelain"], text=True, stderr=subprocess.DEVNULL
         ).strip())
         return commit, dirty
-    except Exception:
-        return "desconhecido", None
+    except Exception:  # dentro do Docker: valores exportados pelo runner
+        env_dirty = os.environ.get("GIT_DIRTY", "")
+        return (os.environ.get("GIT_COMMIT", "desconhecido"),
+                None if env_dirty == "" else env_dirty == "true")
 
 
 def read_frozen_configs(path: Path, cfg: dict) -> set[tuple[str, str, int]]:
@@ -375,7 +395,9 @@ def main() -> int:
     caps = cfg["capture_resolutions"]
 
     if args.models:
-        models = [m for m in models if m["name"] in args.models]
+        # Modelos fora do config (comparação de família) usam os pesos de --weights-root.
+        known = {m["name"]: m for m in models}
+        models = [known.get(n, {"name": n, "weights": f"{n}.pt"}) for n in args.models]
     if args.sizes:
         sizes = [s for s in sizes if s in args.sizes]
     if args.tags:
@@ -412,7 +434,7 @@ def main() -> int:
                 print(f"[AVISO] pesos ausentes para {mspec['name']} seed={seed}; pulando")
                 continue
             print(f"\n=== carregando {mspec['name']} seed={seed} <- {wpath}")
-            model = YOLO(wpath)
+            model = load_model(mspec["name"], wpath)
             weights_hash = file_sha256(Path(wpath)) if Path(wpath).is_file() else None
 
             for cap in caps:

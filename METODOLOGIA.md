@@ -61,6 +61,34 @@ configurações congeladas; não refaz a busca completa no teste.
 O test-dev confirma generalização. Ele não deve ser usado para alterar piso,
 threshold, modelo, resolução, `imgsz` ou hipótese.
 
+## Comparação de modelos (pré-registrada antes do treino)
+
+Objetivo: justificar o detector usado no restante do estudo.
+
+- Elegibilidade a priori, derivada do alvo de implantação (Jetson Orin Nano e RK3588):
+  detector de um estágio, escala "s" (~9–12 M parâmetros), exportação suportada para
+  TensorRT e RKNN, e treino/avaliação no mesmo pipeline Ultralytics. Candidatos:
+  YOLOv8s, YOLOv10s, YOLO11s, YOLO12s e YOLO26s.
+- Referência não candidata: RT-DETR-l, representando detectores transformer em tempo
+  real. É medida no mesmo pipeline para quantificar o custo × recall da alternativa,
+  mas não entra na regra de escolha. Detectores de dois estágios ficam fora por
+  critério (sem caminho de implantação em tempo real nos dois alvos).
+- Receita: a mesma do treino 640 da grade principal (`configs/train_family.yaml`),
+  4 seeds; o único ajuste é batch 8 no RT-DETR-l por memória. YOLO11s reutiliza os
+  checkpoints da grade principal e é reavaliado como controle de reprodutibilidade.
+- Avaliação: val, captura native, imgsz ∈ {640, 960, 1280}, conf=0,25, IoU=0,50.
+- Desfecho primário: `recall_op` macro em native × 1280. Secundários: 640 e 960,
+  recall micro, mAP50-95, pior classe, latência e GFLOPs.
+- Teste: diferença de cada candidato contra o YOLO11s por Welch (seeds não pareiam
+  arquiteturas). Superior/inferior quando o IC95% exclui zero após Holm entre os 4
+  candidatos; equivalente quando o IC90% está dentro de ±2 pontos (TOST, α=0,05);
+  caso contrário, inconclusivo.
+- Regra: se nenhum candidato for superior no desfecho primário, o YOLO11s é mantido;
+  entre equivalentes, o relato traz latência e GFLOPs. Se algum for superior, o de
+  maior média passa a ser o modelo do estudo.
+- Saídas: `results/family/grid_family.csv`, `model_table.csv`, `model_tests.csv`,
+  `compare_models.txt` e `results/train_log_family.csv`.
+
 ## O que será descoberto ao final
 
 1. Qual modelo entrega maior mAP/recall em cada orçamento computacional.

@@ -16,6 +16,7 @@ from benchmark import _exact_operating_metrics, check_operating_point
 from audit_dataset import find_content_duplicates
 from plot_results import (add_latency_columns, aggregate_seeds, knee_table,
                           write_frozen_manifest)
+from compare_models import holm, welch
 from make_calibration_set import stratified_sample
 from visdrone2yolo import update_dataset_yaml
 
@@ -85,6 +86,15 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(first, stratified_sample(images, 20, seed=0))
         self.assertEqual(len(first), 20)
         self.assertEqual(len({p.name.split("_")[0] for p in first}), 10)
+
+    def test_model_comparison_statistics(self):
+        a = np.array([0.45, 0.46, 0.44, 0.45])
+        b = np.array([0.40, 0.41, 0.39, 0.40])
+        diff, lo, hi, p = welch(a, b, 0.95)
+        self.assertAlmostEqual(diff, 0.05)
+        self.assertTrue(0 < lo < diff < hi)
+        self.assertLess(p, 0.01)
+        self.assertEqual(holm({"x": 0.01, "y": 0.04}), {"x": 0.02, "y": 0.04})
 
     def test_exact_macro_and_micro_metrics(self):
         # Rows=predicted, columns=true, last index=background.

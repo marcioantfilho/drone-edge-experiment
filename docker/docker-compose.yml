@@ -30,6 +30,9 @@ services:
     working_dir: /workspace
     environment:
       - SP_EDGE_DEVICE=0
+      # proveniência: o git não roda dentro do container; o runner exporta estes valores
+      - GIT_COMMIT=${GIT_COMMIT:-desconhecido}
+      - GIT_DIRTY=${GIT_DIRTY:-}
       # trava o clock lógico do PyTorch; evita variância na medição de latência
       - CUBLAS_WORKSPACE_CONFIG=:4096:8
     deploy:

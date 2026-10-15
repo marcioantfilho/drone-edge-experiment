@@ -19,7 +19,8 @@ import numpy as np
 import yaml
 
 from benchmark import (PROTOCOL_CONF_OPERATING, PROTOCOL_MATCH_IOU, _exact_operating_metrics,
-                       check_operating_point, file_sha256, git_provenance, pick_device)
+                       check_operating_point, detection_validator_base, file_sha256,
+                       git_provenance, load_model, pick_device)
 
 DUMP_CONF = 0.001
 
@@ -30,12 +31,11 @@ def _np(x, dtype=np.float32) -> np.ndarray:
     return np.asarray(x, dtype=dtype)
 
 
-def _dump_validator():
-    from ultralytics.models.yolo.detect import DetectionValidator
+def _dump_validator(base):
     from ultralytics.utils import ops
     from ultralytics.utils.metrics import ConfusionMatrix
 
-    class DumpValidator(DetectionValidator):
+    class DumpValidator(base):
         def init_metrics(self, model) -> None:
             super().init_metrics(model)
             self.operating_matrix = ConfusionMatrix(names=model.names)
@@ -95,12 +95,11 @@ def _stack(rows: list, n_box_cols: int) -> dict:
     return out
 
 
-def dump_one(weights: str, data_yaml: Path, imgsz: int, ev: dict, device: str, out_file: Path) -> dict:
-    from ultralytics import YOLO
-
-    model = YOLO(weights, task="detect")
+def dump_one(model_name: str, weights: str, data_yaml: Path, imgsz: int, ev: dict, device: str,
+             out_file: Path) -> dict:
+    model = load_model(model_name, weights)
     r = model.val(
-        validator=_dump_validator(), data=str(data_yaml), imgsz=imgsz, batch=ev["batch"],
+        validator=_dump_validator(detection_validator_base(model)), data=str(data_yaml), imgsz=imgsz, batch=ev["batch"],
         conf=DUMP_CONF, iou=ev["iou_nms"], max_det=ev["max_det"], device=device,
         half=ev.get("half", False), split="val", rect=False, plots=False, verbose=False,
         save_json=False,
@@ -182,7 +181,7 @@ def main() -> int:
                         print(f"[SKIP] {out_file} já existe")
                         continue
                     print(f"\n=== {stem}")
-                    stats = dump_one(weights, data_yaml, imgsz, ev, device, out_file)
+                    stats = dump_one(model_name, weights, data_yaml, imgsz, ev, device, out_file)
                     row = {"model": model_name, "seed": seed, "capture_tag": tag, "imgsz": imgsz,
                            "weights": weights, "weights_sha256": whash, "format": wfile.suffix or "dir",
                            "conf_dump": DUMP_CONF, "conf_operating": PROTOCOL_CONF_OPERATING,

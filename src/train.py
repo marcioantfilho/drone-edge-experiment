@@ -4,6 +4,7 @@ import argparse
 import csv
 import datetime
 import hashlib
+import os
 import platform
 import subprocess
 import sys
@@ -36,6 +37,10 @@ def git_provenance() -> dict:
 
     commit = run("rev-parse", "HEAD")
     dirty = run("status", "--porcelain")
+    if commit is None:  # dentro do Docker: valores exportados pelo runner
+        commit = os.environ.get("GIT_COMMIT")
+        env_dirty = os.environ.get("GIT_DIRTY", "")
+        dirty = None if env_dirty == "" else ("x" if env_dirty == "true" else "")
     return {
         "git_commit": commit or "desconhecido",
         "git_dirty": bool(dirty) if dirty is not None else None,
@@ -118,9 +123,10 @@ def normalize_log(log_path: Path) -> None:
 def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed: int) -> dict:
     import torch
     import ultralytics
-    from ultralytics import YOLO
+    from ultralytics import RTDETR, YOLO
 
     tr = dict(cfg["train"])
+    tr.update(mspec.get("train", {}))  # ajuste por modelo (ex.: batch do RT-DETR); vai para o log
     smoke_over = cfg.get("smoke", {}) if args.smoke else {}
     tr.update(smoke_over)
 
@@ -139,7 +145,7 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed
     print(f"\n=== treinando {mspec['name']} <- {weights}  "
           f"(device={device}, epochs={tr['epochs']}, imgsz={tr['imgsz']}, smoke={args.smoke})")
 
-    model = YOLO(weights)
+    model = (RTDETR if mspec["name"].startswith("rtdetr") else YOLO)(weights)
     results = model.train(
         data=cfg["dataset"]["base_yaml"],
         imgsz=tr["imgsz"],

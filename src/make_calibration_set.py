@@ -1,10 +1,3 @@
-"""Lista fixa de imagens de calibração INT8, tirada exclusivamente do split train.
-
-Amostra estratificada por sequência (prefixo do nome no VisDrone) com seed fixa, para
-não concentrar a calibração nas primeiras sequências em ordem alfabética. Gera também
-um data YAML cujo train e val apontam para essa lista, de modo que exportadores que
-calibram com o "val" do YAML (Ultralytics/TensorRT) usem só imagens de train.
-"""
 from __future__ import annotations
 
 import argparse

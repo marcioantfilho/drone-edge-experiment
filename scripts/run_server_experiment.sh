@@ -8,6 +8,7 @@ set -Eeuo pipefail
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh train
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh evaluate
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh pre-quant
+#   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh models
 
 PHASE="${1:-all}"
 export DATA_DIR="${DATA_DIR:-/mnt/storage/sp-edge-data}"
@@ -200,6 +201,40 @@ export_onnx() {
     (cd results/quant/onnx && sha256sum */*.onnx */best.pt > SHA256SUMS)
 }
 
+FAMILY_MODELS="yolov8s yolov10s yolo12s yolo26s rtdetr-l"
+
+compare_models() {
+    echo "=== Comparação de modelos (pré-registrada): treino 640, 4 seeds ==="
+    check_dataset
+    check_derived
+    if [[ -f results/docker_image.txt ]]; then
+        echo "Imagem dos treinos originais: $(cat results/docker_image.txt)"
+        echo "Imagem atual:                 $(docker image inspect sp-edge:gpu --format '{{json .RepoDigests}} {{.Id}}')"
+    fi
+    local model seed todo
+    for model in ${FAMILY_MODELS}; do
+        todo=""
+        for seed in 0 1 2 67; do
+            [[ -f "runs/train/${model}_visdrone_seed_${seed}/weights/best.pt" ]] || todo="${todo} ${seed}"
+        done
+        if [[ -n "${todo}" ]]; then
+            "${DC_GPU[@]}" python src/train.py --config configs/train_family.yaml \
+                --models "${model}" --seeds ${todo} --log results/train_log_family.csv
+        else
+            echo "[SKIP] ${model}: 4 seeds já treinadas"
+        fi
+    done
+
+    echo "=== Avaliação: native x {640, 960, 1280}, conf=0.25 (YOLO11s reavaliado como controle) ==="
+    mkdir -p results/family
+    [[ -f results/family/grid_family.csv ]] && mv results/family/grid_family.csv "results/family/grid_family_${RUN_ID}.bak.csv"
+    "${DC_GPU[@]}" python src/benchmark.py --config configs/experiment.yaml --weights-root runs/train \
+        --models yolo11s ${FAMILY_MODELS} --tags native --sizes 640 960 1280 --seeds 0 1 2 67 \
+        --no-plots --out results/family/grid_family.csv
+    "${DC_GPU[@]}" python src/compare_models.py --csv results/family/grid_family.csv \
+        | tee results/family/compare_models.txt
+}
+
 pre_quant() {
     check_checkpoints
     check_dataset
@@ -233,6 +268,9 @@ require_command make
 require_command nvidia-smi
 
 record_provenance
+# O git não roda dentro do container; train.py/benchmark.py leem estes valores.
+export GIT_COMMIT="$(git rev-parse HEAD)"
+if [[ -n "$(git status --porcelain)" ]]; then export GIT_DIRTY=true; else export GIT_DIRTY=false; fi
 
 case "${PHASE}" in
     prepare)
@@ -247,13 +285,16 @@ case "${PHASE}" in
     pre-quant)
         pre_quant
         ;;
+    models)
+        compare_models
+        ;;
     all)
         prepare
         train_models
         evaluate_val
         ;;
     *)
-        echo "Uso: $0 {prepare|train|evaluate|pre-quant|all}" >&2
+        echo "Uso: $0 {prepare|train|evaluate|pre-quant|models|all}" >&2
         exit 2
         ;;
 esac
