@@ -129,7 +129,7 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed
 
     weights = resolve_weights(mspec["weights"])
     name = f"{mspec['name']}_visdrone_seed_{seed}" + ("_smoke" if args.smoke else "")
-    expected_run_dir = Path("runs/train").resolve() / name
+    expected_run_dir = args.project.resolve() / name
     if expected_run_dir.exists() and not args.smoke:
         raise FileExistsError(
             f"Run já existe e não será sobrescrito: {expected_run_dir}. "
@@ -153,7 +153,7 @@ def train_one(mspec: dict, cfg: dict, args: argparse.Namespace, prov: dict, seed
         device=device,
         seed=seed,
         deterministic=tr.get("deterministic", True),
-        project=str(Path("runs/train").resolve()),
+        project=str(args.project.resolve()),
         name=name,
         exist_ok=args.smoke,
     )
@@ -205,6 +205,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=Path("configs/train.yaml"))
     ap.add_argument("--log", type=Path, default=Path("results/train_log.csv"))
+    ap.add_argument("--project", type=Path, default=Path("runs/train"),
+                    help="diretório dos treinos; use outro para preservar rodadas anteriores")
     ap.add_argument("--models", nargs="*", default=None, help="filtra por nome")
     ap.add_argument("--device", default=None, help="sobrescreve o device do config")
     ap.add_argument("--seeds", nargs="*", type=int, default=None,

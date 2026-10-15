@@ -17,6 +17,10 @@ def main() -> int:
     parser.add_argument("--outdir", type=Path, default=Path("results/summary"))
     args = parser.parse_args()
     df = pd.read_csv(args.csv)
+    # Só agrega grades no ponto operacional do protocolo (conf=0.25, IoU=0.50).
+    off = df[(df["conf_operating"] != 0.25) | (df["match_iou_operating"] != 0.5)]
+    if not off.empty:
+        raise ValueError(f"{len(off)} linhas fora de conf=0.25/IoU=0.50 em {args.csv}")
     args.outdir.mkdir(parents=True, exist_ok=True)
 
     metrics = ["recall_op", "precision_op", "map50", "map50_95",

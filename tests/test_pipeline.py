@@ -12,10 +12,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
 
-from benchmark import _exact_operating_metrics
+from benchmark import _exact_operating_metrics, check_operating_point
 from audit_dataset import find_content_duplicates
 from plot_results import (add_latency_columns, aggregate_seeds, knee_table,
                           write_frozen_manifest)
+from make_calibration_set import stratified_sample
 from visdrone2yolo import update_dataset_yaml
 
 
@@ -70,6 +71,20 @@ class MetricTests(unittest.TestCase):
             manifest = yaml.safe_load(manifest_path.read_text())
             self.assertEqual(manifest["precision_modes"], [])
             self.assertEqual(manifest["configurations"], [])
+
+    def test_operating_point_is_fixed_by_protocol(self):
+        check_operating_point({"conf_operating": 0.25, "match_iou_operating": 0.50})
+        with self.assertRaises(ValueError):
+            check_operating_point({"conf_operating": 0.10, "match_iou_operating": 0.50})
+        with self.assertRaises(ValueError):
+            check_operating_point({"conf_operating": 0.25, "match_iou_operating": 0.75})
+
+    def test_calibration_sample_spreads_over_sequences_and_is_fixed(self):
+        images = [Path(f"train/{seq:07d}_{i:05d}_d_0000001.jpg") for seq in range(10) for i in range(30)]
+        first = stratified_sample(images, 20, seed=0)
+        self.assertEqual(first, stratified_sample(images, 20, seed=0))
+        self.assertEqual(len(first), 20)
+        self.assertEqual(len({p.name.split("_")[0] for p in first}), 10)
 
     def test_exact_macro_and_micro_metrics(self):
         # Rows=predicted, columns=true, last index=background.

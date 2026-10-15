@@ -19,6 +19,8 @@ não existe remapeamento de rótulos para COCO no protocolo final.
 - `mAP50` e `mAP50_95`: qualidade ao longo da curva confiança–precisão–recall.
 - `recall_op` e `precision_op`: macro-médias calculadas diretamente de TP, FP e
   FN em `conf=0.25` e IoU de matching 0,50. Não são o ponto de máximo F1.
+  Esse ponto operacional é fixo: `benchmark.py`, `summarize_results.py` e
+  `plot_results.py` recusam configs ou grades com outro `conf_operating` ou IoU.
 - `recall_micro_op` e `precision_micro_op`: versões ponderadas pela quantidade
   de instâncias.
 - Métricas por classe, parâmetros, GFLOPs, payload decimal em kB, preprocess,

@@ -7,6 +7,7 @@ set -Eeuo pipefail
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh prepare
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh train
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh evaluate
+#   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh pre-quant
 
 PHASE="${1:-all}"
 export DATA_DIR="${DATA_DIR:-/mnt/storage/sp-edge-data}"
@@ -142,6 +143,90 @@ evaluate_val() {
         results/summary/model_comparison_by_seed.csv
 }
 
+DC_GPU=(docker compose -f docker/docker-compose.yml --profile gpu run --rm -T gpu)
+PRED_SEEDS="${PRED_SEEDS:-0 1 2 67}"
+QUANT_SIZES="${QUANT_SIZES:-640 960 1280}"
+
+archive_results() {
+    # Move (não apaga) as saídas anteriores para results/arquivo_<RUN_ID>/.
+    local dest="results/arquivo_${RUN_ID}" moved=0 item
+    for item in grid.csv grid_per_class.csv grid_com_latencia.csv config_otima_por_banda.csv \
+                frozen_configs.yaml summary figs; do
+        if [[ -e "results/${item}" ]]; then
+            mkdir -p "${dest}"
+            mv "results/${item}" "${dest}/"
+            moved=$((moved + 1))
+        fi
+    done
+    echo "Saídas anteriores arquivadas em ${dest} (${moved} itens)."
+}
+
+check_derived() {
+    local n
+    n=$(find "${DATA_DIR}/derived" -maxdepth 1 -name 'visdrone_val_*_q85.yaml' | wc -l)
+    if (( n < 7 )); then
+        echo "Splits degradados incompletos (${n}/7); gerando."
+        make data
+    fi
+}
+
+verify_predictions() {
+    # O recall_op calculado na passada de despejo precisa reproduzir a grade oficial.
+    "${DC_GPU[@]}" python -c "
+import pandas as pd, sys
+g = pd.read_csv('results/grid.csv')
+p = pd.read_csv('results/predictions/index.csv')
+p = p[p['format'] == '.pt']
+m = p.merge(g, on=['model', 'seed', 'capture_tag', 'imgsz'], how='left')
+m['diff'] = (m['recall_op_inrun'] - m['recall_op']).abs()
+print(m[['model', 'seed', 'capture_tag', 'imgsz', 'recall_op_inrun', 'recall_op', 'diff']].to_string(index=False))
+bad = m[(m['diff'] >= 0.002) | m['recall_op'].isna()]
+sys.exit(f'{len(bad)} células divergem >= 0.002 da grade' if len(bad) else 0)
+"
+}
+
+export_onnx() {
+    local seed size dir
+    for seed in ${PRED_SEEDS}; do
+        dir="results/quant/onnx/yolo11s_seed${seed}"
+        mkdir -p "${dir}"
+        cp -n "runs/train/yolo11s_visdrone_seed_${seed}/weights/best.pt" "${dir}/best.pt"
+        for size in ${QUANT_SIZES}; do
+            [[ -f "${dir}/yolo11s_seed${seed}_${size}.onnx" ]] && continue
+            "${DC_GPU[@]}" bash -c "yolo export model=${dir}/best.pt format=onnx imgsz=${size} \
+                opset=17 dynamic=False simplify=True batch=1 && mv ${dir}/best.onnx ${dir}/yolo11s_seed${seed}_${size}.onnx"
+        done
+    done
+    (cd results/quant/onnx && sha256sum */*.onnx */best.pt > SHA256SUMS)
+}
+
+pre_quant() {
+    check_checkpoints
+    check_dataset
+    check_derived
+
+    echo "=== Arquivando saídas anteriores ==="
+    archive_results
+
+    echo "=== Grade completa em conf=0.25 (sem curvas PR: já existem e não dependem do conf) ==="
+    "${DC_GPU[@]}" python src/benchmark.py --config configs/experiment.yaml \
+        --weights-root runs/train --seeds 0 1 2 67 --no-plots
+    make summary
+    make figs
+
+    echo "=== Predições salvas (conf=0.001) para diagnóstico offline ==="
+    "${DC_GPU[@]}" python src/save_predictions.py --models yolo11s --seeds ${PRED_SEEDS} \
+        --tags native 720p --sizes ${QUANT_SIZES}
+    verify_predictions
+
+    echo "=== Calibração INT8 (somente train) e ONNX das candidatas ==="
+    "${DC_GPU[@]}" python src/make_calibration_set.py --n 300 --seed 0
+    export_onnx
+
+    ls -lh results/grid.csv results/grid_per_class.csv results/predictions/index.csv \
+        results/quant/calib_train.txt results/quant/onnx/SHA256SUMS
+}
+
 require_command docker
 require_command git
 require_command make
@@ -159,13 +244,16 @@ case "${PHASE}" in
     evaluate)
         evaluate_val
         ;;
+    pre-quant)
+        pre_quant
+        ;;
     all)
         prepare
         train_models
         evaluate_val
         ;;
     *)
-        echo "Uso: $0 {prepare|train|evaluate|all}" >&2
+        echo "Uso: $0 {prepare|train|evaluate|pre-quant|all}" >&2
         exit 2
         ;;
 esac

@@ -16,6 +16,22 @@ import torch
 import yaml
 
 
+# Ponto operacional do protocolo: constante pré-registrada, não é hiperparâmetro.
+PROTOCOL_CONF_OPERATING = 0.25
+PROTOCOL_MATCH_IOU = 0.50
+
+
+def check_operating_point(ev: dict) -> None:
+    """Recusa qualquer avaliação fora de conf=0.25 e IoU=0.50."""
+    conf = float(ev["conf_operating"])
+    iou = float(ev.get("match_iou_operating", PROTOCOL_MATCH_IOU))
+    if conf != PROTOCOL_CONF_OPERATING or iou != PROTOCOL_MATCH_IOU:
+        raise ValueError(
+            f"Ponto operacional fora do protocolo: conf={conf}, IoU={iou}; "
+            f"o protocolo exige conf={PROTOCOL_CONF_OPERATING} e IoU={PROTOCOL_MATCH_IOU}"
+        )
+
+
 # --------------------------------------------------------------------------
 def pick_device(cfg_device: str | int | None) -> str:
     if cfg_device is not None and str(cfg_device) != "auto":
@@ -335,6 +351,7 @@ def main() -> int:
 
     cfg = yaml.safe_load(args.config.read_text())
     ds, ev, tm = cfg["dataset"], cfg["eval"], cfg["timing"]
+    check_operating_point(ev)
     split = args.split or ds["split"]
     if split == "test" and args.frozen_config is None:
         raise ValueError("Avaliar test exige --frozen-config selecionado em val")

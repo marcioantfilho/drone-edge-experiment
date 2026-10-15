@@ -11,7 +11,8 @@ O protocolo, as variaveis descobertas e os limites de interpretacao estao em `ME
 ## Arquitetura
 
 - `configs/train.yaml`: dataset, modelos, hiperparametros e seeds do treino.
-- `configs/experiment.yaml`: resolucoes, compressao, avaliacao e enlace.
+- `configs/experiment.yaml`: resolucoes, compressao, avaliacao e enlace. O ponto operacional (conf=0,25, IoU=0,50) e fixo e verificado no codigo.
+- `configs/train_1024.yaml`: treino exploratorio em imgsz=1024 (`--project runs/train_1024`); fora do protocolo principal e incompleto.
 - `src/train.py`: treina cada modelo em cada seed e salva `best.pt`.
 - `src/downsample.py`: cria resolucoes degradadas e o manifest de bytes.
 - `src/benchmark.py`: mede val/test, latencia, PR e metricas por classe.
@@ -19,6 +20,8 @@ O protocolo, as variaveis descobertas e os limites de interpretacao estao em `ME
 - `src/plot_results.py`: produz graficos de resolucao, latencia e Pareto.
 - `src/download_visdrone.py`: baixa o test-dev oficial com ground truth.
 - `src/transmission.py`: mede transmissao TCP real entre cliente e servidor.
+- `src/save_predictions.py`: salva predicoes (conf=0,001) e GT pelo mesmo validador, no servidor ou nos dispositivos.
+- `src/make_calibration_set.py`, `src/convert_rknn_int8.py`: calibracao INT8 (so train) e RKNN INT8. Roteiro em `QUANTIZACAO.md`.
 
 O checkpoint escolhido em cada treino e o `best.pt` do Ultralytics 8.4.140, selecionado por mAP50-95. A escolha e feita apenas no `val`; o `test` exige o manifesto congelado produzido por `make figs`.
 

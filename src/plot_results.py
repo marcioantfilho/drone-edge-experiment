@@ -359,6 +359,9 @@ def main() -> int:
         raise ValueError(f"Regra de seleção inválida: {selection_rule}")
 
     raw = pd.read_csv(args.csv)
+    off = raw[(raw["conf_operating"] != 0.25) | (raw["match_iou_operating"] != 0.5)]
+    if not off.empty or float(cfg["eval"]["conf_operating"]) != 0.25:
+        raise ValueError("Seleção exige grade e config no ponto operacional conf=0.25/IoU=0.50")
     if set(raw["split"].unique()) != {"val"}:
         raise ValueError("Seleção/Pareto só pode ser gerada a partir do split val")
     raw = add_latency_columns(raw, link)

@@ -1,0 +1,22 @@
+project: sp-edge-train
+seeds: [0, 1, 2, 67]
+
+dataset:
+  base_yaml: /data/datasets/VisDrone.yaml
+
+models:
+  - {name: yolo11n, weights: yolo11n.pt}
+  - {name: yolo11s, weights: yolo11s.pt}
+  - {name: yolov10n, weights: yolov10n.pt}
+
+train:
+  imgsz: 1024
+  epochs: 100
+  batch: 4  
+  workers: 8
+  amp: true
+  cache: disk
+  max_det: 1000 
+  device: 0
+  deterministic: true
+
