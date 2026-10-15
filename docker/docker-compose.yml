@@ -33,6 +33,8 @@ services:
       # proveniência: o git não roda dentro do container; o runner exporta estes valores
       - GIT_COMMIT=${GIT_COMMIT:-desconhecido}
       - GIT_DIRTY=${GIT_DIRTY:-}
+      # cache persistente do Ultralytics (fontes, settings): treino segue sem internet
+      - YOLO_CONFIG_DIR=/workspace/.ultralytics
       # trava o clock lógico do PyTorch; evita variância na medição de latência
       - CUBLAS_WORKSPACE_CONFIG=:4096:8
     deploy:

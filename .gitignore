@@ -1,5 +1,6 @@
 data/
 venv/
+.ultralytics/
 *.pt
 runs/
 results/*

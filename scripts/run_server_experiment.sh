@@ -236,11 +236,22 @@ compare_models() {
         echo "Imagem dos treinos originais: $(cat results/docker_image.txt)"
         echo "Imagem atual:                 $(docker image inspect sp-edge:gpu --format '{{json .RepoDigests}} {{.Id}}')"
     fi
-    local model seed todo
+    local model seed todo run
     for model in ${FAMILY_MODELS}; do
         todo=""
         for seed in 0 1 2 67; do
-            [[ -f "runs/train/${model}_visdrone_seed_${seed}/weights/best.pt" ]] || todo="${todo} ${seed}"
+            # Concluído = linha no log (gravada só ao fim). best.pt existe já durante o treino.
+            if grep -q "^[^,]*,${model},${seed}," results/train_log_family.csv 2>/dev/null; then
+                continue
+            fi
+            run="runs/train/${model}_visdrone_seed_${seed}"
+            if [[ -d "${run}" ]]; then
+                # Treino interrompido: recomeça do zero; o parcial é guardado, não apagado.
+                mkdir -p runs/interrompidos
+                mv "${run}" "runs/interrompidos/$(basename "${run}")_${RUN_ID}"
+                echo "[RETOMADA] ${model} seed=${seed}: parcial movido para runs/interrompidos/"
+            fi
+            todo="${todo} ${seed}"
         done
         if [[ -n "${todo}" ]]; then
             "${DC_GPU[@]}" python src/train.py --config configs/train_family.yaml \
