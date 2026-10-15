@@ -1,0 +1,26 @@
+project: sp-edge-family-smoke
+seeds: [0, 1]
+
+dataset:
+  base_yaml: /data/datasets/VisDrone.yaml
+
+models:
+  - {name: yolo11s,  weights: yolo11s.pt}
+  - {name: yolov8s,  weights: yolov8s.pt}
+  - {name: yolov9s,  weights: yolov9s.pt}
+  - {name: yolov10s, weights: yolov10s.pt}
+  - {name: yolo12s,  weights: yolo12s.pt}
+  - {name: yolo26s,  weights: yolo26s.pt}
+  - {name: rtdetr-l, weights: rtdetr-l.pt, train: {batch: 8}}
+
+train:
+  imgsz: 640
+  epochs: 1
+  fraction: 0.05
+  batch: 16
+  workers: 8
+  amp: true
+  cache: false
+  max_det: 1000
+  device: 0
+  deterministic: true

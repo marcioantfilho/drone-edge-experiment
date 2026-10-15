@@ -8,6 +8,7 @@ set -Eeuo pipefail
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh train
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh evaluate
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh pre-quant
+#   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh models-smoke
 #   DATA_DIR=/mnt/storage/sp-edge-data bash scripts/run_server_experiment.sh models
 
 PHASE="${1:-all}"
@@ -201,7 +202,31 @@ export_onnx() {
     (cd results/quant/onnx && sha256sum */*.onnx */best.pt > SHA256SUMS)
 }
 
-FAMILY_MODELS="yolov8s yolov10s yolo12s yolo26s rtdetr-l"
+FAMILY_MODELS="yolov8s yolov9s yolov10s yolo12s yolo26s rtdetr-l"
+
+start_gpu_monitor() {
+    # Temperatura, clock, potência e motivo de redução de clock da RTX a 1 Hz (não fatal).
+    nvidia-smi --query-gpu=timestamp,temperature.gpu,clocks.sm,clocks.max.sm,power.draw,clocks_event_reasons.active \
+        --format=csv -l 1 > "results/logs/gpu_${PHASE}_${RUN_ID}.csv" 2>/dev/null &
+    GPU_MON_PID=$!
+    trap 'kill ${GPU_MON_PID} 2>/dev/null || true' EXIT
+}
+
+models_smoke() {
+    echo "=== Ensaio curto da fase models (1 época, 5% do train, 2 seeds; não é resultado) ==="
+    check_dataset
+    check_derived
+    rm -rf runs/smoke_family results/family_smoke
+    mkdir -p results/family_smoke
+    "${DC_GPU[@]}" python src/train.py --config configs/train_family_smoke.yaml \
+        --project runs/smoke_family --log results/family_smoke/train_log.csv
+    "${DC_GPU[@]}" python src/benchmark.py --config configs/experiment.yaml --weights-root runs/smoke_family \
+        --models yolo11s ${FAMILY_MODELS} --tags native --sizes 640 --seeds 0 1 \
+        --no-plots --out results/family_smoke/grid_family_smoke.csv
+    "${DC_GPU[@]}" python src/compare_models.py --csv results/family_smoke/grid_family_smoke.csv \
+        --expected-seeds 2 --primary-imgsz 640
+    echo "Ensaio OK: a fase models pode ser disparada."
+}
 
 compare_models() {
     echo "=== Comparação de modelos (pré-registrada): treino 640, 4 seeds ==="
@@ -283,9 +308,14 @@ case "${PHASE}" in
         evaluate_val
         ;;
     pre-quant)
+        start_gpu_monitor
         pre_quant
         ;;
+    models-smoke)
+        models_smoke
+        ;;
     models)
+        start_gpu_monitor
         compare_models
         ;;
     all)
@@ -294,7 +324,7 @@ case "${PHASE}" in
         evaluate_val
         ;;
     *)
-        echo "Uso: $0 {prepare|train|evaluate|pre-quant|models|all}" >&2
+        echo "Uso: $0 {prepare|train|evaluate|pre-quant|models-smoke|models|all}" >&2
         exit 2
         ;;
 esac

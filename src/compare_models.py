@@ -35,6 +35,7 @@ def main() -> int:
     ap.add_argument("--csv", type=Path, default=Path("results/family/grid_family.csv"))
     ap.add_argument("--delta", type=float, default=0.02)
     ap.add_argument("--primary-imgsz", type=int, default=1280)
+    ap.add_argument("--expected-seeds", type=int, default=4, help="2 apenas no ensaio curto")
     args = ap.parse_args()
 
     g = pd.read_csv(args.csv)
@@ -45,8 +46,8 @@ def main() -> int:
     worst = (pc[(pc["metric"] == "recall") & (pc["capture_tag"] == "native")]
              .groupby(["model", "seed", "imgsz"])["value"].min().rename("worst_class_recall"))
     g = g.join(worst, on=["model", "seed", "imgsz"])
-    if (g.groupby(["model", "imgsz"])["seed"].nunique() != 4).any():
-        raise ValueError("toda célula modelo x imgsz precisa de 4 seeds")
+    if (g.groupby(["model", "imgsz"])["seed"].nunique() != args.expected_seeds).any():
+        raise ValueError(f"toda célula modelo x imgsz precisa de {args.expected_seeds} seeds")
 
     def ci(x: pd.Series) -> str:
         h = stats.t.ppf(0.975, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x))

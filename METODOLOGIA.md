@@ -68,7 +68,7 @@ Objetivo: justificar o detector usado no restante do estudo.
 - Elegibilidade a priori, derivada do alvo de implantação (Jetson Orin Nano e RK3588):
   detector de um estágio, escala "s" (~9–12 M parâmetros), exportação suportada para
   TensorRT e RKNN, e treino/avaliação no mesmo pipeline Ultralytics. Candidatos:
-  YOLOv8s, YOLOv10s, YOLO11s, YOLO12s e YOLO26s.
+  YOLOv8s, YOLOv9s, YOLOv10s, YOLO11s, YOLO12s e YOLO26s.
 - Referência não candidata: RT-DETR-l, representando detectores transformer em tempo
   real. É medida no mesmo pipeline para quantificar o custo × recall da alternativa,
   mas não entra na regra de escolha. Detectores de dois estágios ficam fora por
@@ -80,7 +80,7 @@ Objetivo: justificar o detector usado no restante do estudo.
 - Desfecho primário: `recall_op` macro em native × 1280. Secundários: 640 e 960,
   recall micro, mAP50-95, pior classe, latência e GFLOPs.
 - Teste: diferença de cada candidato contra o YOLO11s por Welch (seeds não pareiam
-  arquiteturas). Superior/inferior quando o IC95% exclui zero após Holm entre os 4
+  arquiteturas). Superior/inferior quando o IC95% exclui zero após Holm entre os 5
   candidatos; equivalente quando o IC90% está dentro de ±2 pontos (TOST, α=0,05);
   caso contrário, inconclusivo.
 - Regra: se nenhum candidato for superior no desfecho primário, o YOLO11s é mantido;
